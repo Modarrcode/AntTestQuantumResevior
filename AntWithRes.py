@@ -20,7 +20,7 @@ log = logging.getLogger(__name__)
 # reservoirpy versions. Use NumPy to generate matrices for portability.
 
 # Number of reservoir units (kept global)
-n_reservoir = 500
+n_reservoir = 1000  # Increased for better RC performance
 
 # Preset frictions to choose from (5 environments)
 FRICTIONS = [0.5, 1.0, 1.5, 2.0, 2.5]
@@ -118,14 +118,21 @@ class CPGController:
         return cls(n_actions, omega, A, phi, off)
 
     def vector(self):
-        return np.concatenate(([self.omega], self.amplitudes, self.phases, self.offsets))
-
+        return np.concatenate(( [self.omega], self.amplitudes, self.phases, self.offsets ))
     def step(self, t: float):
         theta = self.omega * t + self.phases
         return self.offsets + self.amplitudes * np.sin(theta)
 
 
 def get_base_x(env):
+    def get_base_vel(env):
+        try:
+            dat = env.unwrapped.data
+            if hasattr(dat, "qvel"):
+                return float(dat.qvel[0])
+        except Exception:
+            pass
+        return 0.0
     try:
         dat = env.unwrapped.data
         if hasattr(dat, "qpos"):
@@ -140,6 +147,9 @@ def evaluate_controller(env, controller: CPGController, episode_length: int = 50
     dt = 0.02
     start_x = get_base_x(env)
     total_reward = 0.0
+    max_speed = 0.0
+    slip_count = 0
+    prev_x = start_x
     for step in range(episode_length):
         t = step * dt
         action = controller.step(t)
@@ -150,6 +160,14 @@ def evaluate_controller(env, controller: CPGController, episode_length: int = 50
             action = np.clip(action, -1.0, 1.0)
         obs, reward, terminated, truncated, info = env.step(action)
         total_reward += float(reward)
+        # Max speed calculation
+        curr_x = get_base_x(env)
+        speed = (curr_x - prev_x) / dt
+        max_speed = max(max_speed, abs(speed))
+        prev_x = curr_x
+        # Slipping detection: negative reward or sudden drop in speed
+        if reward < -1.0 or abs(speed) < 0.01:
+            slip_count += 1
         if render:
             try:
                 env.render()
@@ -161,7 +179,7 @@ def evaluate_controller(env, controller: CPGController, episode_length: int = 50
             break
     end_x = get_base_x(env)
     forward = end_x - start_x
-    return forward, total_reward, step + 1
+    return forward, total_reward, step + 1, max_speed, slip_count
 
 
 def random_search_tune(env, n_actions, n_iters=200, episode_length=500, render=False, frame_sleep=0.0):
@@ -174,7 +192,7 @@ def random_search_tune(env, n_actions, n_iters=200, episode_length=500, render=F
         off = np.random.uniform(-0.5, 0.5, size=n_actions)
         vec = np.concatenate(([omega], A, phi, off))
         controller = CPGController.from_vector(vec, n_actions)
-        forward, _, _ = evaluate_controller(env, controller, episode_length=episode_length, render=render, frame_sleep=frame_sleep)
+        forward, *_ = evaluate_controller(env, controller, episode_length=episode_length, render=render, frame_sleep=frame_sleep)
         if forward > best_score:
             best_score = forward
             best_vec = vec.copy()
@@ -182,7 +200,7 @@ def random_search_tune(env, n_actions, n_iters=200, episode_length=500, render=F
     return best_vec, best_score
 
 
-def generate_dataset(env, controller: CPGController, n_episodes: int = 10, episode_length: int = 500, out_path: str = "dataset.npz"):
+def generate_dataset(env, controller: CPGController, n_episodes: int = 10, episode_length: int = 500, out_path: str = "dataset.npz", render: bool = False, frame_sleep: float = 0.0):
     Xs = []
     Ys = []
     metas = []
@@ -201,6 +219,14 @@ def generate_dataset(env, controller: CPGController, n_episodes: int = 10, episo
             Xs.append(obs.copy())
             Ys.append(action.copy())
             obs, reward, terminated, truncated, info = env.step(action)
+            if render:
+                try:
+                    env.render()
+                except Exception:
+                    pass
+                if frame_sleep > 0:
+                    import time
+                    time.sleep(frame_sleep)
             ep_steps += 1
             if terminated or truncated:
                 break
@@ -335,6 +361,62 @@ def train_on_dataset(path, n_reservoir_local=500, washout: int = 50):
 
 
 def main():
+    def evaluate_random_policy(env, episode_length=200):
+        obs, info = env.reset()
+        dt = 0.02
+        start_x = get_base_x(env)
+        total_reward = 0.0
+        max_speed = 0.0
+        slip_count = 0
+        prev_x = start_x
+        for step in range(episode_length):
+            action = env.action_space.sample()
+            obs, reward, terminated, truncated, info = env.step(action)
+            total_reward += float(reward)
+            curr_x = get_base_x(env)
+            speed = (curr_x - prev_x) / dt
+            max_speed = max(max_speed, abs(speed))
+            prev_x = curr_x
+            if reward < -1.0 or abs(speed) < 0.01:
+                slip_count += 1
+            if terminated or truncated:
+                break
+        end_x = get_base_x(env)
+        forward = end_x - start_x
+        return forward, total_reward, step + 1, max_speed, slip_count
+
+    def evaluate_rc_policy(env, esn, episode_length=200, input_mean=None, input_std=None):
+        obs, info = env.reset()
+        dt = 0.02
+        start_x = get_base_x(env)
+        total_reward = 0.0
+        max_speed = 0.0
+        slip_count = 0
+        prev_x = start_x
+        for step in range(episode_length):
+            # Normalize observation if normalization params provided
+            obs_norm = obs
+            if input_mean is not None and input_std is not None:
+                obs_norm = (obs - input_mean) / input_std
+            action = esn.run(obs_norm.reshape(1, -1))
+            action = np.asarray(action).flatten()
+            try:
+                action = np.clip(action, env.action_space.low, env.action_space.high)
+            except Exception:
+                action = np.clip(action, -1.0, 1.0)
+            obs, reward, terminated, truncated, info = env.step(action)
+            total_reward += float(reward)
+            curr_x = get_base_x(env)
+            speed = (curr_x - prev_x) / dt
+            max_speed = max(max_speed, abs(speed))
+            prev_x = curr_x
+            if reward < -1.0 or abs(speed) < 0.01:
+                slip_count += 1
+            if terminated or truncated:
+                break
+        end_x = get_base_x(env)
+        forward = end_x - start_x
+        return forward, total_reward, step + 1, max_speed, slip_count
     parser = argparse.ArgumentParser(description="Run Ant with ReservoirPy ESN readout")
     parser.add_argument("--render", action="store_true", help="Enable human rendering window")
     parser.add_argument("--friction-index", type=int, choices=list(range(len(FRICTIONS))), default=1, help=f"Choose preset floor friction (0-{len(FRICTIONS)-1})")
@@ -358,58 +440,96 @@ def main():
     parser.add_argument("--evaluate-models", action="store_true", help="Evaluate saved models and tuned CPGs on test frictions")
     parser.add_argument("--eval-episodes", type=int, default=2, help="Episodes per evaluation run (average over these)")
     parser.add_argument("--eval-length", type=int, default=300, help="Steps per evaluation episode")
+    parser.add_argument("--compare-cpg-vs-random", action="store_true", help="Compare CPG vs random policy across all frictions")
+
+    def compare_cpg_vs_random_rc():
+        """Compare CPG, random, and RC policies for all frictions. Train separate RC model per friction for best performance."""
+        print("COMPARE FUNCTION STARTED")
+        print("Friction, CPG Fwd, Rand Fwd, RC Fwd, CPG Spd, Rand Spd, RC Spd, CPG Slip, Rand Slip, RC Slip, CPG Rew, Rand Rew, RC Rew")
+        
+        for idx, mu in enumerate(FRICTIONS):
+            print(f"Processing friction idx {idx} (mu={mu})...")
+            
+            # CPG: Tune and evaluate
+            env_cpg = gym.make("Ant-v5")
+            set_floor_friction(env_cpg, mu)
+            best_vec, best_score = random_search_tune(env_cpg, env_cpg.action_space.shape[0], n_iters=300 if DEBUG else 1000, episode_length=500, render=False)
+            cpg = CPGController.from_vector(best_vec, env_cpg.action_space.shape[0])
+            cpg_fwd, cpg_rew, _, cpg_max_speed, cpg_slip = evaluate_controller(env_cpg, cpg, episode_length=500, render=False)
+
+            # Collect CPG-generated data for RC training (multiple episodes for diversity)
+            X_rc, Y_rc = [], []
+            n_episodes = 20  # Multiple episodes for better coverage
+            steps_per_episode = 500
+            for ep in range(n_episodes):
+                obs, info = env_cpg.reset()
+                for step in range(steps_per_episode):
+                    t = step * 0.02
+                    action = cpg.step(t)
+                    action = np.asarray(action).flatten()
+                    try:
+                        action = np.clip(action, env_cpg.action_space.low, env_cpg.action_space.high)
+                    except Exception:
+                        action = np.clip(action, -1.0, 1.0)
+                    X_rc.append(obs)
+                    Y_rc.append(action)
+                    obs, reward, terminated, truncated, info = env_cpg.step(action)
+                    if terminated or truncated:
+                        break
+            X_rc = np.array(X_rc)
+            Y_rc = np.array(Y_rc)
+            
+            # Normalize inputs for better RC training
+            input_mean = X_rc.mean(axis=0)
+            input_std = X_rc.std(axis=0)
+            input_std[input_std < 1e-8] = 1.0
+            X_rc_norm = (X_rc - input_mean) / input_std
+            
+            env_cpg.close()
+
+            # Random policy: Evaluate
+            env_rand = gym.make("Ant-v5")
+            set_floor_friction(env_rand, mu)
+            rand_fwd, rand_rew, _, rand_max_speed, rand_slip = evaluate_random_policy(env_rand, episode_length=500)
+            env_rand.close()
+
+            # RC policy: Train on friction-specific CPG data with improved hyperparameters
+            env_rc = gym.make("Ant-v5")
+            set_floor_friction(env_rc, mu)
+            n_inputs = env_rc.observation_space.shape[0]
+            n_outputs = env_rc.action_space.shape[0]
+            np.random.seed(42 + idx)  # Different seed per friction for diversity
+            Win = np.random.uniform(-2.0, 2.0, size=(n_reservoir, n_inputs))  # Increased input weight range
+            density = 0.1
+            mask = (np.random.rand(n_reservoir, n_reservoir) < density)
+            W = np.random.uniform(-0.5, 0.5, size=(n_reservoir, n_reservoir)) * mask.astype(float)
+            eigvals = np.linalg.eigvals(W)
+            max_abs = np.max(np.abs(eigvals))
+            if max_abs > 1e-12:
+                W *= 0.95 / max_abs  # Adjusted spectral radius for stability
+            else:
+                W = np.random.uniform(-0.1, 0.1, size=(n_reservoir, n_reservoir))
+            reservoir = Reservoir(units=n_reservoir, input_dim=n_inputs, Win=Win, W=W)
+            readout = Ridge(input_dim=n_reservoir, output_dim=n_outputs, ridge=1e-6)
+            esn = Model([reservoir, readout], edges=[(reservoir, 0, readout)])
+            esn.fit(X_rc_norm, Y_rc)  # Train on normalized inputs
+            rc_fwd, rc_rew, _, rc_max_speed, rc_slip = evaluate_rc_policy(env_rc, esn, episode_length=500, input_mean=input_mean, input_std=input_std)
+            env_rc.close()
+
+            row = [mu, cpg_fwd, rand_fwd, rc_fwd, cpg_max_speed, rand_max_speed, rc_max_speed, cpg_slip, rand_slip, rc_slip, cpg_rew, rand_rew, rc_rew]
+            print(", ".join(str(x) for x in row))
+        return
+
     args = parser.parse_args()
-
-    # Create environment with or without rendering
-    log.info("Creating environment 'Ant-v5' (render=%s)", args.render)
-    if args.render:
-        env = gym.make("Ant-v5", render_mode="human")
-    else:
-        env = gym.make("Ant-v5")
-
-    # Apply selected friction preset
-    mu = FRICTIONS[args.friction_index]
-    log.info("Setting floor friction to %.3f (index=%d)", mu, args.friction_index)
-    set_floor_friction(env, mu)
-
-    # If requested, generate datasets for specified training indices
-    if args.generate_datasets:
-        ds_dir = Path(args.dataset_dir)
-        ds_dir.mkdir(parents=True, exist_ok=True)
-        train_idxs = [int(x) for x in args.train_indices.split(",") if x.strip() != ""]
-        for idx in train_idxs:
-            if idx < 0 or idx >= len(FRICTIONS):
-                log.warning("Skipping invalid friction index %s", idx)
-                continue
-            mu_i = FRICTIONS[idx]
-            log.info("Generating dataset for friction index %d (mu=%.3f)", idx, mu_i)
-            # create a fresh env for this friction
-            try:
-                env_i = gym.make("Ant-v5")
-                set_floor_friction(env_i, mu_i)
-                # tune a small CPG (keep tuning quick by default)
-                tune_iters = args.tune_iters_per_env if hasattr(args, "tune_iters_per_env") else args.tune_iters
-                best_vec, best_score = random_search_tune(env_i, env_i.action_space.shape[0], n_iters=tune_iters, episode_length=args.tune_length, render=args.render, frame_sleep=args.frame_sleep)
-                if best_vec is None:
-                    log.warning("No CPG found for idx %d; using default random CPG", idx)
-                    best_vec = CPGController(env_i.action_space.shape[0]).vector()
-                # save cpg params
-                vec_path = ds_dir / f"cpg_idx{idx}.npy"
-                np.save(vec_path, best_vec)
-                log.info("Saved tuned CPG params to %s (score=%.3f)", vec_path, best_score)
-                # generate dataset
-                ds_path = ds_dir / f"dataset_idx{idx}.npz"
-                controller = CPGController.from_vector(best_vec, env_i.action_space.shape[0])
-                generate_dataset(env_i, controller, n_episodes=args.dataset_episodes, episode_length=args.dataset_length, out_path=str(ds_path))
-            except Exception:
-                log.exception("Failed to generate dataset for friction idx %d", idx)
-            finally:
-                try:
-                    env_i.close()
-                except Exception:
-                    pass
-
+    if args.compare_cpg_vs_random:
+        compare_cpg_vs_random_rc()
+        return
+    
     try:
+        # Create environment
+        env = gym.make("Ant-v5")
+        set_floor_friction(env, FRICTIONS[args.friction_index])
+        
         # determine input/output dims from env
         n_inputs = env.observation_space.shape[0]
         n_outputs = env.action_space.shape[0]
@@ -479,162 +599,6 @@ def main():
                 log.info("  test step %d/%d  cumulative_reward=%.3f", i + 1, n_test, total_reward)
 
         log.info("Test run finished, cumulative reward=%.3f", total_reward)
-
-        # If user requested to train models from dataset files, handle that now
-        if args.train_from_datasets:
-            model_dir = Path(args.model_dir)
-            model_dir.mkdir(parents=True, exist_ok=True)
-            ds_dir = Path(args.dataset_dir)
-            npz_files = sorted(glob.glob(str(ds_dir / "*.npz")))
-            if len(npz_files) == 0:
-                log.warning("No dataset files (*.npz) found in %s", ds_dir)
-            for ds in npz_files:
-                try:
-                    log.info("Training on dataset %s", ds)
-                    model_dict = train_on_dataset(ds, n_reservoir_local=n_reservoir, washout=args.washout)
-                    out_name = model_dir / (Path(ds).stem + ".npz")
-                    np.savez(
-                        out_name,
-                        W=model_dict["W"],
-                        Win=model_dict["Win"],
-                        Wout=model_dict["Wout"],
-                        input_mean=model_dict.get("input_mean"),
-                        input_std=model_dict.get("input_std"),
-                        state_mean=model_dict.get("state_mean"),
-                        state_std=model_dict.get("state_std"),
-                        ep_lens=model_dict.get("ep_lens"),
-                        n_reservoir=model_dict.get("n_reservoir"),
-                        washout=model_dict.get("washout"),
-                        seed=model_dict.get("seed"),
-                        dataset=model_dict.get("dataset"),
-                        timestamp=model_dict.get("timestamp"),
-                    )
-                    log.info("Saved trained model arrays to %s", out_name)
-                except Exception:
-                    log.exception("Failed to train/save model for dataset %s", ds)
-
-        # Evaluate saved models vs tuned CPGs on test indices
-        if args.evaluate_models:
-            model_dir = Path(args.model_dir)
-            ds_dir = Path(args.dataset_dir)
-            # load trained models that match dataset_idx{train_idx}.pkl
-            # load .npz model files (W, Win, Wout)
-            model_files = sorted(glob.glob(str(model_dir / "*.npz")))
-            models = {}
-            for mf in model_files:
-                try:
-                    stem = Path(mf).stem
-                    if "dataset_idx" in stem:
-                        tidx = int(stem.split("dataset_idx")[-1])
-                    else:
-                        tidx = stem
-                    data = np.load(mf)
-                    models[tidx] = {
-                        "W": data["W"],
-                        "Win": data["Win"],
-                        "Wout": data["Wout"],
-                        "input_mean": data.get("input_mean") if "input_mean" in data else None,
-                        "input_std": data.get("input_std") if "input_std" in data else None,
-                        "state_mean": data.get("state_mean") if "state_mean" in data else None,
-                        "state_std": data.get("state_std") if "state_std" in data else None,
-                        "ep_lens": data.get("ep_lens") if "ep_lens" in data else None,
-                        "n_reservoir": int(data.get("n_reservoir")) if "n_reservoir" in data else None,
-                        "washout": int(data.get("washout")) if "washout" in data else None,
-                        "seed": int(data.get("seed")) if "seed" in data else None,
-                        "dataset": str(data.get("dataset")) if "dataset" in data else None,
-                        "timestamp": str(data.get("timestamp")) if "timestamp" in data else None,
-                    }
-                    log.info("Loaded model arrays %s for train_idx=%s", mf, tidx)
-                except Exception:
-                    log.exception("Failed to load model file %s", mf)
-
-            # load tuned CPG params if available
-            cpgs = {}
-            cpg_files = sorted(glob.glob(str(ds_dir / "cpg_idx*.npy")))
-            for cf in cpg_files:
-                try:
-                    stem = Path(cf).stem
-                    tidx = int(stem.split("cpg_idx")[-1])
-                    vec = np.load(cf)
-                    cpgs[tidx] = CPGController.from_vector(vec, env.action_space.shape[0])
-                    log.info("Loaded CPG params %s for train_idx=%d", cf, tidx)
-                except Exception:
-                    log.exception("Failed to load CPG params %s", cf)
-
-            test_idxs = [int(x) for x in args.test_indices.split(",") if x.strip() != ""]
-            results = []
-            for test_idx in test_idxs:
-                if test_idx < 0 or test_idx >= len(FRICTIONS):
-                    log.warning("Skipping invalid test index %s", test_idx)
-                    continue
-                mu_test = FRICTIONS[test_idx]
-                log.info("Evaluating on test friction index %d (mu=%.3f)", test_idx, mu_test)
-                env_test = None
-                try:
-                    env_test = gym.make("Ant-v5")
-                    set_floor_friction(env_test, mu_test)
-                    for tidx, controller in cpgs.items():
-                        fwd_sum = 0.0
-                        rew_sum = 0.0
-                        for ep in range(args.eval_episodes):
-                            fwd, rew, steps = evaluate_controller(env_test, controller, episode_length=args.eval_length, render=args.render, frame_sleep=args.frame_sleep)
-                            fwd_sum += fwd
-                            rew_sum += rew
-                        results.append({"test_idx": test_idx, "train_idx": tidx, "policy": "CPG", "forward": fwd_sum / args.eval_episodes, "reward": rew_sum / args.eval_episodes})
-
-                    for tidx, model in models.items():
-                        W = model["W"]
-                        Win = model["Win"]
-                        Wout = model["Wout"]
-                        n_res_local = W.shape[0]
-                        fwd_sum = 0.0
-                        rew_sum = 0.0
-                        for ep in range(args.eval_episodes):
-                            obs, info = env_test.reset()
-                            start_x = get_base_x(env_test)
-                            total_r = 0.0
-                            x = np.zeros((n_res_local,), dtype=float)
-                            for step in range(args.eval_length):
-                                u = np.asarray(obs).flatten()
-                                # apply input normalization if available
-                                if model.get("input_mean") is not None and model.get("input_std") is not None:
-                                    u_norm = (u - model["input_mean"]) / model["input_std"]
-                                else:
-                                    u_norm = u
-                                # reservoir update
-                                x = np.tanh(W.dot(x) + Win.dot(u_norm))
-                                # apply state normalization before readout if available
-                                if model.get("state_mean") is not None and model.get("state_std") is not None:
-                                    x_norm = (x - model["state_mean"]) / model["state_std"]
-                                else:
-                                    x_norm = x
-                                x_aug = np.concatenate([x_norm, [1.0]])
-                                action = Wout.dot(x_aug)
-                                try:
-                                    action = np.clip(action, env_test.action_space.low, env_test.action_space.high)
-                                except Exception:
-                                    action = np.clip(action, -1.0, 1.0)
-                                obs, reward, terminated, truncated, info = env_test.step(action)
-                                total_r += float(reward)
-                                if terminated or truncated:
-                                    break
-                            end_x = get_base_x(env_test)
-                            fwd_sum += (end_x - start_x)
-                            rew_sum += total_r
-                        results.append({"test_idx": test_idx, "train_idx": tidx, "policy": "Reservoir", "forward": fwd_sum / args.eval_episodes, "reward": rew_sum / args.eval_episodes})
-                except Exception:
-                    log.exception("Failed evaluation on test idx %d", test_idx)
-                finally:
-                    try:
-                        if env_test is not None:
-                            env_test.close()
-                    except Exception:
-                        pass
-
-            # summarize results
-            log.info("Evaluation summary:")
-            for r in results:
-                log.info(" test_idx=%s train_idx=%s policy=%s forward=%.3f reward=%.3f", r["test_idx"], r["train_idx"], r["policy"], r["forward"], r["reward"]) 
 
     except Exception as e:
         log.exception("Unhandled exception during execution: %s", e)
