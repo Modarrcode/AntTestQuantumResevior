@@ -1,0 +1,9 @@
+cpg_mix,action_smooth,distance,gif
+0.0,0.75,1.894,ant_quick_a75_m0.gif
+0.0,0.85,2.477,ant_quick_a85_m0.gif
+0.05,0.75,3.734,ant_quick_a75_m5.gif
+0.05,0.85,1.213,ant_quick_a85_m5.gif
+0.08,0.75,1.662,ant_quick_a75_m8.gif
+0.08,0.85,2.179,ant_quick_a85_m8.gif
+0.12,0.75,1.245,ant_quick_a75_m12.gif
+0.12,0.85,3.36,ant_quick_a85_m12.gif

@@ -1,0 +1,15 @@
+Simple RC Action Imitation Summary
+======================================================================
+Model path: simple_rc_model\simple_rc.pkl
+Reservoir units: 800
+Ridge alpha: 1e-05
+
+CPG Baseline Stats:
+  friction 0.5: cpg_fwd=0.397, cpg_reward=67.0
+  friction 1.0: cpg_fwd=4.038, cpg_reward=193.8
+  friction 1.5: cpg_fwd=1.238, cpg_reward=73.4
+
+RC Evaluation Stats:
+  friction 0.5: rc_fwd=0.120, rc_reward=43.9
+  friction 1.0: rc_fwd=0.169, rc_reward=113.6
+  friction 1.5: rc_fwd=-0.009, rc_reward=117.1

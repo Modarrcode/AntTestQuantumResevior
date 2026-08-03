@@ -1,0 +1,26 @@
+[INFO] ======================================================================
+[INFO] SIMPLE RC ACTION IMITATION TRAINING
+[INFO] ======================================================================
+[INFO] Loaded CPG params from datasets\cpg_idx0.npy
+[INFO] Friction 0.5 CPG: forward=-0.031 reward=58.4
+[INFO] Friction 0.5: 1 good episodes from 75 attempts
+[INFO] Loaded CPG params from datasets\cpg_idx1.npy
+[INFO] Friction 1.0 CPG: forward=4.004 reward=193.1
+[INFO]   Friction 1.0 collected 5/25 good episodes
+[INFO]   Friction 1.0 collected 10/25 good episodes
+[INFO]   Friction 1.0 collected 15/25 good episodes
+[INFO]   Friction 1.0 collected 20/25 good episodes
+[INFO]   Friction 1.0 collected 25/25 good episodes
+[INFO] Friction 1.0: 25 good episodes from 25 attempts
+[INFO] Loaded CPG params from datasets\cpg_idx2.npy
+[INFO] Friction 1.5 CPG: forward=1.595 reward=80.5
+[INFO]   Friction 1.5 collected 5/25 good episodes
+[INFO]   Friction 1.5 collected 10/25 good episodes
+[INFO]   Friction 1.5 collected 15/25 good episodes
+[INFO]   Friction 1.5 collected 20/25 good episodes
+[INFO]   Friction 1.5 collected 25/25 good episodes
+[INFO] Friction 1.5: 25 good episodes from 26 attempts
+[INFO] Collected dataset: obs=(25500, 105) actions=(25500, 8)
+[INFO] RC inputs shape: (25500, 106)
+[INFO] RC targets shape (actions only): (25500, 8)
+[INFO] Training simple RC (action imitation only)...

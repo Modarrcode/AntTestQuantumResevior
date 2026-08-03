@@ -1,0 +1,5 @@
+RC model trained on env Walker2d-v5
+Dataset: datasets/dataset_Walker2d-v5.npz
+Samples: 9153
+Input dim: 17
+Output dim: 6

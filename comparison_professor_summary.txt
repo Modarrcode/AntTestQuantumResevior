@@ -1,0 +1,21 @@
+PROFESSOR-READY RC VS CPG SUMMARY
+============================================================
+
+A) FAIR COMPARISON (NO RL FINE-TUNING)
+- RC is trained to imitate/control from CPG-generated supervision per friction.
+  Friction 0.5: CPG=0.810m, RC=0.031m (3.8% of CPG), Random=0.959m
+  Friction 1.0: CPG=3.335m, RC=1.426m (42.7% of CPG), Random=-0.604m
+  Friction 1.5: CPG=3.425m, RC=-0.140m (-4.1% of CPG), Random=0.289m
+  Friction 2.0: CPG=4.256m, RC=0.032m (0.7% of CPG), Random=-1.195m
+  Friction 2.5: CPG=4.546m, RC=0.294m (6.5% of CPG), Random=0.662m
+  Mean RC/CPG across listed frictions: 9.9%
+  Best fair-case RC: friction 1.0, RC=1.426m (42.7% of CPG).
+
+B) OPTIMIZED POTENTIAL (RL FINE-TUNED RC)
+- RC starts from supervised baseline, then RL directly optimizes reward/distance.
+  Supervised baseline (friction 1.0): RC=3.075m vs CPG=4.022m (76.5% of CPG).
+  RL best seen in training log: RC=10.420m (259.1% of CPG, +238.9% vs supervised RC).
+
+CLAIMS TO REPORT
+1) Fair claim: Supervised RC approaches CPG but usually does not exceed it.
+2) Optimization claim: RL-finetuned RC can exceed CPG on the target friction.

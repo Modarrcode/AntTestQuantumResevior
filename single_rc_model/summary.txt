@@ -1,0 +1,19 @@
+Training Summary: Single RC trained on 3 CPGs
+============================================================
+
+CPG Training Results:
+  Friction 0.5: CPG forward=1.785, reward=105.673
+  Friction 1.0: CPG forward=2.880, reward=2.290
+  Friction 1.5: CPG forward=2.504, reward=41.189
+
+RC Testing Results (single RC tested on all frictions):
+  Friction 0.5: RC forward=-0.164, reward=90.438
+  Friction 1.0: RC forward=0.719, reward=-215.817
+  Friction 1.5: RC forward=0.772, reward=190.978
+
+============================================================
+BEST: RC performs best at friction 1.5
+  Forward: 0.772
+  Reward: 190.978
+
+Model: single_rc_model\single_rc_trained_on_3cpgs.pkl

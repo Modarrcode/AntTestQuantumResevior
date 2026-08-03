@@ -1,0 +1,5 @@
+RC model trained on env HalfCheetah-v5
+Dataset: datasets/dataset_HalfCheetah-v5.npz
+Samples: 22500
+Input dim: 17
+Output dim: 6
