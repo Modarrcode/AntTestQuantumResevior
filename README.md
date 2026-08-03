@@ -52,3 +52,39 @@ Backups:
 If files were overwritten during recent merges, a backup folder `backup_before_merge_YYYYMMDD_HHMMSS` exists in the repo root containing the original local copies.
 
 If you want, I can add a dedicated `requirements.txt` for the multilink scripts or expand this README with per-script flag descriptions.
+
+Detailed CLI reference (multilink scripts)
+
+- `train_multilink_rc_cpg.py`
+	- Description: Train a shared ESN readout across multiple payloads using the scripted hold teacher.
+	- Key flags:
+		- `--links` : number of links in the chain (default: 4)
+		- `--masses` : comma-separated base link masses (default: "0.20,0.25,0.30,0.35")
+		- `--episodes` : episodes per payload (default: 20)
+		- `--steps` : steps per episode (default: 300)
+		- `--reservoir` : reservoir size (default: 600)
+		- `--output` : output `.npz` path (default: `multilink_rc_hold_model.npz`)
+
+- `train_single_payload.py`
+	- Description: Train a dedicated ESN readout for a single payload value.
+	- Key flags:
+		- `--payload` : payload mass (required)
+		- `--links`, `--masses`, `--episodes`, `--steps`, `--reservoir`, `--output` (same meanings as above)
+
+- `retrain_boost_heavy.py`
+	- Description: Retrain a heavy payload using an augmented teacher that adds a constant extra lift to the target payload.
+	- Key flags:
+		- `--payload` : target payload mass (default: 0.40)
+		- `--extra-lift` : extra constant torque per joint added to the teacher for the target payload (default: 0.30)
+		- other flags: `--links`, `--masses`, `--episodes`, `--steps`, `--reservoir`, `--output`
+
+- `run_multilink_rc_cpg_demo.py`
+	- Description: Run a saved ESN model and export a visual demo (GIF) and reward plot.
+	- Usage example:
+		```powershell
+		python run_multilink_rc_cpg_demo.py multilink_rc_hold_model_payload0.20.npz --output-gif demo.gif --reward-plot reward.png
+		```
+
+Notes:
+- The multilink scripts require a working PyBullet installation for simulation. For headless runs, the scripts set `render_mode=None` during training to avoid opening a GUI.
+- If you need a tailored `requirements.txt` (pinned versions from your environment), I can generate one automatically.
