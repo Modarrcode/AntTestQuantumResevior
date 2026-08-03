@@ -27,3 +27,28 @@ source .venv/bin/activate
 pip install -r requirements.txt  # create if needed
 python train_rc_optimized_80.py --help
 ```
+
+## Multilink RC/ESN Hold Controller
+
+This repository also includes an upright multi-link holding environment and ESN-based reservoir controller scripts developed alongside the Ant experiments.
+
+Files of interest (new):
+
+- `multilink_mass_robot_env.py` — PyBullet/Gym environment for an upright multi-link robot with configurable payload.
+- `train_multilink_rc_cpg.py` — Collects teacher episodes and trains an ESN readout for mass-conditioned holding.
+- `train_single_payload.py` — Train a dedicated ESN readout for a single payload value.
+- `retrain_boost_heavy.py` — Retrain the heavy-payload teacher with an extra lift to improve hold performance for heavy payloads.
+- `run_multilink_rc_cpg_demo.py` — Run a saved ESN model and export a demo GIF and reward plot.
+
+Quick demo (Windows PowerShell):
+
+```powershell
+python train_single_payload.py --payload 0.20 --output multilink_rc_hold_model_payload0.20.npz
+python run_multilink_rc_cpg_demo.py multilink_rc_hold_model_payload0.20.npz --output-gif multilink_rc_hold_demo_payload0.20.gif --reward-plot multilink_rc_hold_reward_payload0.20.png
+```
+
+Backups:
+
+If files were overwritten during recent merges, a backup folder `backup_before_merge_YYYYMMDD_HHMMSS` exists in the repo root containing the original local copies.
+
+If you want, I can add a dedicated `requirements.txt` for the multilink scripts or expand this README with per-script flag descriptions.
