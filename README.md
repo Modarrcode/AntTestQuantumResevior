@@ -7,8 +7,17 @@ Key files and folders:
 - `visualize_*` scripts — visualization helpers and GIF/MP4 exporters.
 - `optimized_rc_80_model/` — excluded from repo (models and large artifacts).
 
+Organized folders (presentation-ready):
+- `artifacts/videos/` — presentation MP4s (tracked via Git LFS).
+- `artifacts/gifs/` — generated GIFs (tracked via Git LFS).
+- `artifacts/csv/` — CSV outputs and sweep results.
+- `reports/` — human-readable summaries and notes (TXT).
+- `logs/` — training and monitoring logs.
+
 Notes:
-- Large model files, datasets, and media are intentionally excluded by `.gitignore`. If you want specific artifacts included, let me know and I can add Git LFS configuration.
+- Large model files and datasets remain excluded by `.gitignore` (see `.gitignore`).
+- Presentation videos and GIFs have been added via Git LFS to keep the repository lightweight.
+- If you want additional artifacts tracked (e.g., `.npy`, `.pkl`), I can enable Git LFS for those too.
 - To reproduce training, create a Python virtualenv and install dependencies (numpy, gymnasium, Pillow, etc.).
 
 Example quick start:
