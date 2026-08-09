@@ -70,4 +70,5 @@ Do not claim that:
 
 - `scripts/train_rc_optimized_80.py`
 - `optimized_rc_80_model/summary.txt`
+- `dissertation_training_and_data.md`
 - `paper_ready_summary.md`

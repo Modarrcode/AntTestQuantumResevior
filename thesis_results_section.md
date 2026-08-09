@@ -33,6 +33,8 @@ The most defensible visual evidence is the pair of clips that separate motion pa
 
 These clips support two distinct points. The first shows that the motion differs meaningfully across surface segments, while the second makes the surface identity explicit through color and GUI cues. Together with the saved model summary, they support the claim that the system is surface-conditioned and visually interpretable, even if it is not yet fully solved.
 
+The training and data details that justify these results are documented in [dissertation_training_and_data.md](d:/Masters%20Project/AntTestQuantumResevior/dissertation_training_and_data.md).
+
 ## Dissertation Conclusion From The Results
 
 The correct conclusion from the current results is not that the model has achieved perfect surface-invariant walking. The correct conclusion is that reservoir computing can absorb and reuse structured CPG priors, and that those priors can be shaped to produce more animal-like quadruped motion across friction conditions. However, the final RC policy still shows uneven performance, so the contribution is best presented as a successful adaptation framework rather than a fully solved locomotion controller.
