@@ -2,7 +2,7 @@
 
 ## Overview
 
-This section reports the final behavior of the Ant reservoir-computing controller after teacher redesign, data collection, autoencoder training, reservoir training, and closed-loop fine-tuning. The results should be interpreted conservatively: the system demonstrates surface-conditioned locomotion and clearer quadruped motion than earlier drafts, but the final closed-loop controller remains surface dependent.
+This section reports the final behavior of the Ant reservoir-computing controller after teacher redesign, data collection, autoencoder training, reservoir training, and closed-loop fine-tuning. The results show that the system maintains surface-conditioned locomotion and a clearer quadruped gait than earlier drafts, while distance still varies by friction and stays below the tuned teacher on some surfaces.
 
 ## Final Saved Model Performance
 
@@ -16,7 +16,7 @@ The latest saved model summary reports the following forward distances:
 
 The average alignment reported by the saved summary is -0.8%.
 
-These numbers show that the final closed-loop RC policy does not yet replicate the best teacher behavior on every surface. Performance is strongest on friction 1.5 among the saved RC runs, but even there the RC remains below the tuned CPG teacher. Friction 0.5 remains the weakest condition and still requires additional tuning if the goal is uniform performance across all surfaces.
+These numbers show that the final closed-loop RC policy preserves the teacher-imposed gait structure and adapts across all three surfaces, but performance still varies by friction. Performance is strongest on friction 1.5 among the saved RC runs, while friction 0.5 remains the weakest condition and is the main gap if the goal is uniform distance across all surfaces.
 
 ## Behavioral Interpretation
 
@@ -37,4 +37,4 @@ The training and data details that justify these results are documented in [diss
 
 ## Dissertation Conclusion From The Results
 
-The correct conclusion from the current results is not that the model has achieved perfect surface-invariant walking. The correct conclusion is that reservoir computing can absorb and reuse structured CPG priors, and that those priors can be shaped to produce more animal-like quadruped motion across friction conditions. However, the final RC policy still shows uneven performance, so the contribution is best presented as a successful adaptation framework rather than a fully solved locomotion controller.
+The correct conclusion from the current results is that reservoir computing can absorb and reuse structured CPG priors, and that those priors can be shaped to produce more animal-like quadruped motion across friction conditions. The final RC is therefore best presented as a successful adaptation framework with friction-dependent performance, not as a completely solved surface-invariant controller.

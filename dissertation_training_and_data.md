@@ -53,4 +53,4 @@ The main data and result artifacts are:
 
 ## Reproducibility Notes
 
-The training script includes defensive handling for cases where a friction slice produces too few acceptable episodes. In that case, the pipeline keeps a fallback episode rather than failing with an empty dataset. This keeps the dissertation narrative honest: the method is robust enough to run end-to-end, but the final performance is still surface dependent.
+The training script includes defensive handling for cases where a friction slice produces too few acceptable episodes. In that case, the pipeline keeps a fallback episode rather than failing with an empty dataset. This keeps the dissertation narrative honest: the method is robust enough to run end-to-end, and the remaining gap is best described as friction-dependent performance rather than a broken pipeline.

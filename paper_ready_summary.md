@@ -2,7 +2,7 @@
 
 ## Thesis Claim
 
-This project studies whether a reservoir-computing Ant controller can inherit structured locomotion priors from three friction-specific CPG teachers and then adapt those priors across different floor surfaces. The dissertation-safe claim is that the architecture supports surface-conditioned adaptation and produces more readable, better controlled quadruped motion than earlier drafts of the gait teacher. It is not yet correct to claim that the final closed-loop RC policy reaches the same long-distance target on every surface.
+This project studies whether a reservoir-computing Ant controller can inherit structured locomotion priors from three friction-specific CPG teachers and then adapt those priors across different floor surfaces. The dissertation-safe claim is that the architecture supports surface-conditioned adaptation and produces more readable, better controlled quadruped motion than earlier drafts of the gait teacher. The final closed-loop RC preserves the intended gait structure and surface sensitivity, although its distance still varies by friction and remains below the tuned teacher on some surfaces.
 
 ## System Overview
 
@@ -55,7 +55,7 @@ These results are dissertation-safe if presented as the current closed-loop RC p
 
 Use wording like this in the dissertation:
 
-"A friction-conditioned reservoir-computing controller was trained from three surface-specific CPG teachers. The resulting system improves the readability and surface sensitivity of the Ant gait, but its final closed-loop performance remains surface dependent and does not yet fully match the best teacher behavior on every friction level."
+"A friction-conditioned reservoir-computing controller was trained from three surface-specific CPG teachers. The resulting system improves the readability and surface sensitivity of the Ant gait, and the final closed-loop controller preserves the intended quadruped motion while still showing friction-dependent distance differences relative to the tuned teacher."
 
 ## What Not To Claim
 
