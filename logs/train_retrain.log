@@ -1,0 +1,85 @@
+nohup: ignoring input
+[INFO] ======================================================================
+[INFO] OPTIMIZED RC FOR 80%+ ALIGNMENT
+[INFO] ======================================================================
+[INFO] Config: n_episodes=100, n_reservoir=1000, cpg_iters=800, ae_latent_dim=64, ae_epochs=60
+[INFO] 
+[Friction 0.5]
+[INFO]   Tuning CPG (800 iterations)...
+[INFO]     CPG tune iter 200: best_dist=1.888
+[INFO]     CPG tune iter 400: best_dist=1.888
+[INFO]     CPG tune iter 600: best_dist=1.888
+[INFO]     CPG tune iter 800: best_dist=1.888
+[INFO]     Hill-climbing from best_dist=1.888...
+[INFO]     After hill-climbing: best_dist=5.977
+[INFO]   CPG tuned: forward=5.977
+[INFO]   Collecting 100 episodes (min_forward=1.0)...
+[INFO]       Collected 10/100 good episodes
+[INFO]       Collected 20/100 good episodes
+[INFO]       Collected 30/100 good episodes
+[INFO]       Collected 40/100 good episodes
+[INFO]       Collected 50/100 good episodes
+[INFO]       Collected 60/100 good episodes
+[INFO]       Collected 70/100 good episodes
+[INFO]       Collected 80/100 good episodes
+[INFO]       Collected 90/100 good episodes
+[INFO]       Collected 100/100 good episodes
+[INFO]       Final: 100 good episodes from 104 attempts
+[INFO]   Collected 100 episodes (50000 total steps)
+[INFO] Saved checkpoint: optimized_rc_80_model/rc_80_checkpoint_1785619823_collected_mu_0.5.pkl
+[INFO] 
+[Friction 1.0]
+[INFO]   Tuning CPG (800 iterations)...
+[INFO]     CPG tune iter 200: best_dist=1.256
+[INFO]     CPG tune iter 400: best_dist=1.256
+[INFO]     CPG tune iter 600: best_dist=1.256
+[INFO]     CPG tune iter 800: best_dist=1.256
+[INFO]     Hill-climbing from best_dist=1.256...
+[INFO]     After hill-climbing: best_dist=2.229
+[INFO]   CPG tuned: forward=2.229
+[INFO]   Collecting 100 episodes (min_forward=1.0)...
+[INFO]       Collected 10/100 good episodes
+[INFO]       Collected 20/100 good episodes
+[INFO]       Collected 30/100 good episodes
+[INFO]       Collected 40/100 good episodes
+[INFO]       Collected 50/100 good episodes
+[INFO]       Collected 60/100 good episodes
+[INFO]       Collected 70/100 good episodes
+[INFO]       Collected 80/100 good episodes
+[INFO]       Collected 90/100 good episodes
+[INFO]       Collected 100/100 good episodes
+[INFO]       Final: 100 good episodes from 100 attempts
+[INFO]   Collected 100 episodes (50000 total steps)
+[INFO] Saved checkpoint: optimized_rc_80_model/rc_80_checkpoint_1785620041_collected_mu_1.0.pkl
+[INFO] 
+[Friction 1.5]
+[INFO]   Tuning CPG (800 iterations)...
+[INFO]     CPG tune iter 200: best_dist=2.105
+[INFO]     CPG tune iter 400: best_dist=2.105
+[INFO]     CPG tune iter 600: best_dist=2.105
+[INFO]     CPG tune iter 800: best_dist=2.105
+[INFO]     Hill-climbing from best_dist=2.105...
+[INFO]     After hill-climbing: best_dist=9.032
+[INFO]   CPG tuned: forward=9.032
+[INFO]   Collecting 100 episodes (min_forward=1.0)...
+[INFO]       Collected 10/100 good episodes
+[INFO]       Collected 20/100 good episodes
+[INFO]       Collected 30/100 good episodes
+[INFO]       Collected 40/100 good episodes
+[INFO]       Collected 50/100 good episodes
+[INFO]       Collected 60/100 good episodes
+[INFO]       Collected 70/100 good episodes
+[INFO]       Collected 80/100 good episodes
+[INFO]       Collected 90/100 good episodes
+[INFO]       Collected 100/100 good episodes
+[INFO]       Final: 100 good episodes from 100 attempts
+[INFO]   Collected 100 episodes (50000 total steps)
+[INFO] Saved checkpoint: optimized_rc_80_model/rc_80_checkpoint_1785620258_collected_mu_1.5.pkl
+[INFO] 
+Total episodes: 300 | Raw input dim: 227 | Output dim: 8
+[INFO] Training autoencoder (input=227 latent=64, epochs=60)...
+[INFO]     AE epoch 1/60 mse=0.669755
+[INFO]     AE epoch 6/60 mse=0.412641
+[INFO]     AE epoch 12/60 mse=0.359635
+[INFO]     AE epoch 18/60 mse=0.333037
+[INFO]     AE epoch 24/60 mse=0.315189

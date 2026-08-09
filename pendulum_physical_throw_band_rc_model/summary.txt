@@ -1,0 +1,15 @@
+Dedicated Pendulum RC Training
+======================================================================
+Mass values: (1.0, 1.5)
+Model: pendulum_physical_throw_band_rc_model\pendulum_rc.pkl
+Best configs by mass:
+  mass 1.0: {'spectral_radius': 0.99, 'input_scaling': 1.0, 'leak_rate': 0.5, 'ridge': 0.001, 'name': 'SR99-L05-R1e3'} (val MSE=6.450029)
+  mass 1.5: {'spectral_radius': 0.99, 'input_scaling': 1.0, 'leak_rate': 0.5, 'ridge': 0.001, 'name': 'SR99-L05-R1e3'} (val MSE=0.065859)
+
+Teacher stats:
+  mass 1.0: reward=-759.243, upright=26.0%
+  mass 1.5: reward=-786.524, upright=20.0%
+
+RC results:
+  mass 1.0: reward=-847.120, upright=49.7%
+  mass 1.5: reward=-762.396, upright=25.9%

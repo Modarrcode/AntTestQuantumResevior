@@ -1,0 +1,45 @@
+[INFO] ============================================================
+[INFO] EXTENDED RC + RL TRAINING
+[INFO] ============================================================
+[INFO] Strategy: Start from improved RC (76%% baseline)
+[INFO]           + Extended RL optimization (200 generations)
+[INFO] ============================================================
+[INFO] 
+Step 1: Loading improved RC model...
+[INFO] Loaded model from friction 1.0 training
+[INFO]   CPG performance: 4.022m
+[INFO]   Supervised RC: 3.075m (76% of CPG)
+[INFO]   Config: {'spectral_radius': 0.9, 'input_scaling': 1.5, 'ridge': 1e-07}
+[INFO] 
+Step 2: Creating RL-trainable policy...
+[INFO] Policy created. Readout weights shape: (1000, 8)
+[INFO] 
+Step 3: Setting up environment (friction 1.0)...
+[INFO] 
+Step 4: Running extended RL optimization...
+[INFO] 
+============================================================
+[INFO] EXTENDED RL OPTIMIZATION
+[INFO] ============================================================
+[INFO] Generations: 200, Population: 30
+[INFO] Optimizing 8000 parameters
+[INFO] Baseline (improved supervised): reward=82.40, distance=2.034
+[INFO] Gen 1: NEW BEST! distance=5.368m, reward=170.57
+[INFO] Gen 9: NEW BEST! distance=6.048m, reward=169.06
+[INFO] Gen 20: best_dist=6.048m (297% of baseline), avg_dist=2.239m, noise=0.0200
+[INFO] Gen 30: Increasing exploration (noise=0.0220)
+[INFO] Gen 40: NEW BEST! distance=6.778m, reward=125.89
+[INFO] Gen 40: best_dist=6.778m (333% of baseline), avg_dist=2.183m, noise=0.0220
+[INFO] Gen 60: best_dist=6.778m (333% of baseline), avg_dist=2.115m, noise=0.0220
+[INFO] Gen 61: Increasing exploration (noise=0.0242)
+[INFO] Gen 80: best_dist=6.778m (333% of baseline), avg_dist=2.045m, noise=0.0242
+[INFO] Gen 82: Increasing exploration (noise=0.0266)
+[INFO] Gen 85: NEW BEST! distance=7.202m, reward=173.99
+[INFO] Gen 100: NEW BEST! distance=10.420m, reward=331.65
+[INFO] Gen 100: best_dist=10.420m (512% of baseline), avg_dist=2.405m, noise=0.0266
+[INFO] Gen 120: best_dist=10.420m (512% of baseline), avg_dist=2.098m, noise=0.0266
+[INFO] Gen 121: Increasing exploration (noise=0.0293)
+[INFO] Gen 140: best_dist=10.420m (512% of baseline), avg_dist=2.039m, noise=0.0293
+[INFO] Gen 142: Increasing exploration (noise=0.0322)
+[INFO] Gen 160: best_dist=10.420m (512% of baseline), avg_dist=1.258m, noise=0.0322
+[INFO] Gen 163: Increasing exploration (noise=0.0354)

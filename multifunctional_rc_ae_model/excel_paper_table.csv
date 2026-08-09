@@ -1,0 +1,4 @@
+friction,episodes,rc_distance_mean_ci95,cpg_distance_mean_ci95,rc_reward_mean_ci95,cpg_reward_mean_ci95,distance_gap_pct_median,reward_gap_pct_median,distance_gap_abs_mean,reward_gap_abs_mean,rc_win_rate_distance_pct,rc_win_rate_reward_pct
+0.5,20,0.076 ± 0.131,0.275 ± 0.077,-32.53 ± 35.54,64.46 ± 1.54,-77.62,-198.00,-0.199,-96.99,30.0,20.0
+1.0,20,0.416 ± 0.243,4.227 ± 0.155,98.73 ± 37.89,197.59 ± 3.09,-90.07,-46.84,-3.811,-98.86,0.0,10.0
+1.5,20,0.416 ± 0.248,0.966 ± 0.263,64.20 ± 41.69,67.99 ± 5.26,-46.89,13.62,-0.551,-3.78,20.0,50.0

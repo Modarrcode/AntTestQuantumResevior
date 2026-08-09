@@ -1,0 +1,24 @@
+Env: Ant-v5
+Model: multienv_rc_models/rc_model_Ant-v5.pkl
+  episodes=1
+  avg_distance=0.203 std_distance=0.000
+  avg_reward=-148.179 std_reward=0.000
+
+Env: Hopper-v5
+Model: multienv_rc_models/rc_model_Hopper-v5.pkl
+  episodes=1
+  avg_distance=0.188 std_distance=0.000
+  avg_reward=68.514 std_reward=0.000
+
+Env: HalfCheetah-v5
+Model: multienv_rc_models/rc_model_HalfCheetah-v5.pkl
+  episodes=1
+  avg_distance=7.956 std_distance=0.000
+  avg_reward=113.478 std_reward=0.000
+
+Env: Walker2d-v5
+Model: multienv_rc_models/rc_model_Walker2d-v5.pkl
+  episodes=1
+  avg_distance=1.024 std_distance=0.000
+  avg_reward=406.701 std_reward=0.000
+

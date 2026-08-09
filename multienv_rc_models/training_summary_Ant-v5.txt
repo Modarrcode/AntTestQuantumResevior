@@ -1,0 +1,5 @@
+RC model trained on env Ant-v5
+Dataset: datasets/dataset_Ant-v5.npz
+Samples: 22500
+Input dim: 105
+Output dim: 8

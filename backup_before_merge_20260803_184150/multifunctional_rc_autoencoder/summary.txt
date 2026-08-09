@@ -1,0 +1,10 @@
+Multifunctional RC with Autoencoder
+============================================================
+Model: multifunctional_rc_autoencoder\multifunctional_rc_autoencoder.pkl
+Train frictions: [0.5, 1.0, 1.5]
+Reservoir units: 800
+Latent dim: 24
+
+Friction 0.5: reward=-32.80, distance=0.145
+Friction 1.0: reward=29.56, distance=0.511
+Friction 1.5: reward=5.28, distance=0.109

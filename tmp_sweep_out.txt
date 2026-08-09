@@ -1,0 +1,5 @@
+[INFO] Visualizing saved model from optimized_rc_80_model/rc_80_optimized.pkl
+[INFO] Recording GIF to ant_rc_sweep_a1p6_s1p5_amp1p1.gif
+[INFO] Using multi-surface switching over 0.50m zones: [0.5, 1.0, 1.5]
+[INFO] Saved rollout GIF with 400 frames to ant_rc_sweep_a1p6_s1p5_amp1p1.gif (playback: 6.4 sec)
+[INFO] Episode distance: 0.027

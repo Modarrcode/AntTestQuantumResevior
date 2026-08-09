@@ -1,0 +1,16 @@
+Multifunctional RC + Autoencoder Summary
+======================================================================
+Model path: multifunctional_rc_ae_model\multifunctional_rc_autoencoder.pkl
+Latent dim: 48
+Reservoir units: 1500
+AE final loss: 0.035932
+
+CPG Baseline Stats:
+  friction 0.5: cpg_fwd=0.367, cpg_reward=66.4
+  friction 1.0: cpg_fwd=3.636, cpg_reward=185.7
+  friction 1.5: cpg_fwd=1.976, cpg_reward=88.1
+
+RC Evaluation Stats:
+  friction 0.5: rc_fwd=-0.014, rc_reward=-14.5
+  friction 1.0: rc_fwd=-0.014, rc_reward=41.3
+  friction 1.5: rc_fwd=0.820, rc_reward=180.8

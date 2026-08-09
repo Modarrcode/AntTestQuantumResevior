@@ -1,0 +1,33 @@
+# Python
+__pycache__/
+*.py[cod]
+*.so
+
+# Virtual environments
+.venv
+.venv*/
+venv/
+env/
+ENV/
+
+# PyCharm/VSCode
+.idea/
+.vscode/
+
+# Data, models and artifacts
+optimized_rc_80_model/
+models/
+datasets/
+best_models/
+cpg_vectors/
+*.npz
+*.npy
+*.pkl
+
+# Large media
+*.mp4
+*.gif
+*.avi
+
+# OS files
+.DS_Store

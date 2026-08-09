@@ -1,0 +1,5 @@
+RC model trained on env Hopper-v5
+Dataset: datasets/dataset_Hopper-v5.npz
+Samples: 3299
+Input dim: 11
+Output dim: 3

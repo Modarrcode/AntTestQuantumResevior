@@ -1,0 +1,15 @@
+nohup: ignoring input
+[2026-08-01 22:27:31] monitor_and_visualize started
+[2026-08-01 22:27:31] Found existing model mtime=1781444005.0
+[2026-08-01 22:43:39] Model updated: mtime=1785620618.5580456 (prev=1781444005.0)
+[2026-08-01 22:43:39] Starting visualizer...
+[2026-08-01 22:43:39] Visualizer started with PID 30816
+[INFO] Visualizing saved model from /home/modarr/Desktop/Masters Project/AntTestQuantumResevior/optimized_rc_80_model/rc_80_optimized.pkl
+[INFO] Recording GIF to /home/modarr/Desktop/Masters Project/AntTestQuantumResevior/ant_rc_switch_surface_auto.gif
+[INFO] Using multi-surface switching over 0.50m zones: [0.5, 1.0, 1.5]
+[INFO]   Environment changed surface -> CPG 1.0 at 0.53m
+[INFO]   Environment changed surface -> CPG 1.5 at 1.03m
+[INFO] Saved rollout GIF with 1000 frames to /home/modarr/Desktop/Masters Project/AntTestQuantumResevior/ant_rc_switch_surface_auto.gif (playback: 16.0 sec)
+[INFO] Episode distance: 11.852
+[2026-08-01 22:44:08] Visualizer finished with exit code 0
+[2026-08-01 22:44:08] Monitoring continues for further updates...
