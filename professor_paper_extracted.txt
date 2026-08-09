@@ -1,0 +1,944 @@
+Reservoir Computing for Torque-Restricted Pendulum Control
+Fan Ye†, Timothy Bonner†, Arsen Abdulali, Kai-Fung Chu, Fumiya Iida
+Abstract— Torque-restricted control remains a significant
+challenge in robotics, often necessitating precise modeling or
+large amounts of data for effective controller design. To address
+this problem, we introduce a novel training method that utilizes
+a Reservoir Computing (RC) framework to serve as a model-
+free controller that can effectively control a nonlinear robot
+using minimal training. This paper explores the application of
+the proposed framework to a torque-restricted single pendulum
+and achieves similar control performance to that of model-
+free reinforcement learning controllers while utilising just 0.5%
+of the data and a simple passive data collection method. We
+analyze 1,000 unique successful reservoir structures, examining
+their internal connectivity and memory properties, and identify
+key structural features that enhance control performance.
+Finally, this paper also explores our proposed controller’s
+robustness to changes in pendulum dimensionality and torque
+limit with successful control achieved for a large range of
+varying properties without any additional training.
+I. INTRODUCTION
+Controlling nonlinear dynamical systems is a long-
+standing challenge which often requires learning-based meth-
+ods that utilise extensive data to capture their complex
+behaviors. Recently, reservoir computing–based controllers
+operating at the “edge of chaos” have shown promise by
+leveraging rich internal dynamics to simulate and predict
+system behavior [1]. As a result, these controllers can enable
+more sample-efficient control of fully actuated nonlinear
+systems, reducing the reliance on large training datasets [2].
+Moreover, in addition to providing rich dynamics, reservoirs
+possess a form of memory that could be exploited for
+planning in torque-restricted nonlinear dynamical systems—
+a direction yet to be fully explored. The goal of this paper is
+to develop a sample-efficient training method for a reservoir
+computing controller [1], apply it to a canonical nonlinear
+dynamical system, and perform an extensive analysis. This
+analysis may serve as a stepping stone for future research on
+more complex dynamical systems [3].
+Traditionally, control of torque-restricted systems has been
+model-based, aiming to optimize trajectories to a target under
+certain constraints imposed on the controller. Algorithms like
+the Iterative Linear Quadratic Regulator (iLQR) [4], [5],
+Direct Collocation [6], and Feasibility-Driven Differential
+Dynamic Programming [7] are commonly used to achieve
+stable control. However, these methods require formulating a
+*This work was supported by a Huawei HiSilicon Scholarship,
+MathWorks-CUED Small Grant Programme, and the European Union’s
+Horizon 2020 research and innovation programme under the Marie
+Skłodowska-Curie grant agreement No 101034337.
+†These authors contributed equally to this work.
+Bio-Inspired Robotics Lab, Department of Engineering, University of
+Cambridge, Trumpington Street, Cambridge CB2 1PZ, United Kingdom
+aa2335@cam.ac.uk
+mathematical model of the robot [8], making them less prac-
+tical for complex systems, where computational complexity
+of the system may conflict with real-time constraints. As an
+alternative, model-free controllers can be trained using data
+collected during system operation. Reinforcement learning
+(RL) is a popular approach for this purpose, as it allows the
+agent to explore the state space and learn optimal actions
+through interaction with the environment [9]. Algorithms
+such as Deep Deterministic Policy Gradient (DDPG) for
+cart-pole swing-up [10] and Soft Actor-Critic (SAC) for
+hopper control [11] demonstrate the effectiveness of RL in
+robotic control. However, these methods suffer from sample
+inefficiency and long training times [12]. One way to mitigate
+this issue is by training in simulation [3], however, this
+introduces a new challenge—the need for highly accurate
+system models [13], [14].
+One prospective way to tackle this trade-off is through
+model-free learning of the natural dynamics. Reservoir Com-
+puting (RC) emerges as a promising candidate for effectively
+modeling these dynamics [2], [15] while simultaneously con-
+trolling the robot. Due to its rich natural dynamics, the reser-
+voir can potentially emulate the robot’s inverse dynamics
+and utilize this for control purposes [16]. Furthermore, there
+has been evidence that the reservoir can capture dynamical
+features of the robot and accelerate the learning process
+[17]. There have been a few successful attempts at using
+RC for robotic control—for instance, vehicle navigation [18],
+[19], chaotic behavior modulation [20], [21], and robotic arm
+manipulation [1], [22], [23]. However, in these cases, RC has
+generally been used as an alternative to linear controllers,
+focusing on fully actuated systems. Considering the rich
+nonlinear dynamics [24] and inherent memory [25] in RC,
+torque-restricted control becomes an excellent opportunity to
+showcase the benefits of using reservoir computers in robotic
+control.
+In this work, we extend the reservoir computing–based
+controller [1] to torque-restricted nonlinear dynamical sys-
+tems by introducing a novel training methodology that uses
+minimal data and leverages the reservoir’s ability to predict
+both the required force and the state of the robot (Fig. 1).
+For an in-depth analysis, we apply the proposed approach
+to a canonical nonlinear dynamical system, i.e., a torque-
+limited pendulum, which allows us to perform comprehen-
+sive evaluations and enhance transparency. Thus, the primary
+goal of our work is to understand how reservoir computing
+operates in the context of planning for torque-restricted
+robotic control, rather than focusing on deployment to more
+complex robot systems, which we leave for future research.
+To evaluate the efficiency of our approach, we employed a
+2025 IEEE/RSJ International Conference on Intelligent Robots and Systems (IROS 2025)
+October 19-25, 2025. Hangzhou, China
+979-8-3315-4393-8/25/$31.00 ©2025 IEEE 3823
+2025 IEEE/RSJ International Conference on Intelligent Robots and Systems (IROS) | 979-8-3315-4393-8/25/$31.00 ©2025 IEEE | DOI: 10.1109/IROS60139.2025.11247156
+Authorized licensed use limited to: Queen Mary University of London. Downloaded on March 03,2026 at 20:45:49 UTC from IEEE Xplore.  Restrictions apply. 
+
+target train 
+2 3
+Data collection
+(Free dropping)
+BalancingPlanning Torque-limited 
+pendulum
+Reservoir controller Robot
+B
+A
+1
+1
+2 3
+Fig. 1. Reservoir control for torque-restricted robots. (A) The phase portrait
+of a torque-limited single pendulum. The green area is directly achievable
+by linear controllers, while the red area is not directly achievable and usually
+requires motion planning. The red line is an ideal trajectory for the pendulum
+to swing up. (B) The flow chart of reservoir control trained by free dropping
+the pendulum.
+4-node Echo State Network (ESN) [26], [27], and compared
+the training time and control performance of our reservoir-
+based method against the classical RL algorithm, DDPG.
+The results show that our ESN achieves effective control to
+swing-up and balance our torque-restricted pendulum within
+the range [−π,π ] using only 0.52% of the robot operation
+time required by DDPG and a simple data collection method.
+Beyond efficiency, we analyzed 1,000 successful ESNs
+with randomly initialized interconnections and optimized
+hyperparameters, examining their common structures, mem-
+ory capacity, and nonlinearity. In addition to understanding
+the internal properties of these reservoirs, we evaluated
+their robustness to variations in robot properties, including
+changes in the torque limit, pendulum length, and mass. Our
+findings reveal that a pre-trained ESN can achieve stable
+pendulum control across a wide range of conditions, with
+torque limits varying from 40% to 100%, pendulum lengths
+from 25% to 200%, and mass densities from 10% to 500%
+of the nominal values.
+The code and data for all simulations are available at
+https://github.com/Kyushudy/restorquelimitedpencontrol.git.
+A related tutorial is available in Matlab file exchange at
+https://uk.mathworks.com/matlabcentral/fileexchange/175030-
+reservoir-computing-for-robotic-control.
+II. RELATED WORKS
+Among model-free learning approaches, reinforcement
+learning remains the most widely used framework for non-
+linear control tasks. Beginning with Q-learning [28], and
+evolving through algorithms such as DDPG [10], SAC [11],
+and Proximal Policy Optimization (PPO) [29], advances in
+RL have primarily focused on improving sample efficiency
+and robustness by refining policy and objective functions.
+With increasing awareness of physical constraints inherent
+to real-world robotic systems, such as torque, velocity, and
+safety limits, recent research has begun to integrate these
+constraints into the learning process. Early efforts introduced
+constraint terms into the reward function [30] or employed
+constrained Markov decision processes [31] to reduce re-
+liance on reward engineering. More recent methods incorpo-
+rate stochastic termination during training, embedding con-
+straints into policy learning [32]. These developments make
+constrained RL particularly well suited for tasks involving
+hard actuation limits, such as the torque-restricted pendulum
+swing-up addressed in this study.
+Nonetheless, empirical evaluations indicate that improve-
+ments in sample efficiency across RL variants, from DDPG
+to SAC, PPO [33], and constrained RL methods [30], [31],
+have not achieved gains beyond a single order of magnitude.
+In contrast, the proposed reservoir computing-based ap-
+proach achieves the pendulum swing-up using only 0.52% of
+the robot operation time required by DDPG, demonstrating
+a substantial improvement in data efficiency over existing
+RL-based methods.
+III. METHODS
+In this section, we begin by defining the Echo State
+Network (ESN), the form of reservoir computing used for
+robot control. We then introduce the robot model—a torque-
+limited single pendulum—and describe the data collection
+process. Next, we outline how the collected data is used to
+train the reservoir for swing-up and stabilization. Finally, we
+present the complete signal loop of the reservoir controller
+in action, demonstrating its connection to the robot.
+A. Reservoir Computing: Echo State Networks
+An ESN is a type of reservoir computer, whose reservoir
+is an N-node recurrent neural network [34]. The update
+function of its node states is given by:
+˙s(t)τ = −s(t) + tanh(WIn In + Wrs(t)), (1)
+s(t + ∆t) = s(t) +
+Z t+∆t
+t
+˙s(t)dt (2)
+where ∆t is the simulation timestep, s(t) (dimension
+N×1) is the reservoir state matrix,τ is the leakage parameter
+that determines the reservoir behavioral timescale, WIn
+(N×NIn) is the input weight matrix, In (NIn× 1) is the
+input vector, Wr (N×N) is the interconnection recurrent
+weight matrix and tanh is the hyperbolic tangent function
+for the reservoir’s nonlinearity. Following the conceptual
+recommendation in [16], we set τ = 0.085 to enable the
+reservoir to respond dynamically to the pendulum’s behavior.
+The output of an ESN is a linear combination of a scaled
+bias, input, and node states, given by:
+Out(t) = WOut[1; In(t); s(t)], (3)
+3824
+Authorized licensed use limited to: Queen Mary University of London. Downloaded on March 03,2026 at 20:45:49 UTC from IEEE Xplore.  Restrictions apply. 
+
+where Out (NOut× 1) is the output vector and WOut
+(NOut× 1 +NIn +N) is the output weight matrix which is
+tunable by training.
+Training data consists of the input In, the corresponding
+reservoir states s, and the desired output TOut. The output
+weight matrix WOut is optimized using ridge regression:
+X = [1; In; s] (4)
+WOut = TOutX T(XX T +βI)−1, (5)
+whereβ is the regularization coefficient and I is an identity
+matrix. Note that TOut (NOut×Nt) and X (1+NIn +N×
+Nt) are horizontally stacked matrices constructed over the
+time series, where Nt denotes the number of timesteps. The
+input weight matrix WIn and the reservoir weight matrix
+Wr are fixed and not subject to training.
+B. Robot: Torque Limited Single Pendulum
+𝜃
+𝑥(𝑡 + 5𝛿)
+𝑥(𝑡 + 𝛿)
+𝑥(𝑡)𝜏𝑎
+Robot 𝑥 =
+𝜃
+ሶ𝜃
+ሷ𝜃
+𝑥(𝑡)
+𝑥(𝑡 + 𝛿)
+𝑥(𝑡 + 5𝛿)
+A B
+Fig. 2. Robot model. (A) The single pendulum model and (B) the data
+collected from free dropping.
+The robotic system used is a torque-limited single pen-
+dulum with uniform mass distribution, as shown in Fig.2A.
+The dynamics are dictated by:
+1
+3ml2¨θ =−mgl
+2sin(θ) +τa, m =ρabl, (6)
+where m is the pendulum mass, θ is the pendulum angle
+defined as positive anticlockwise starting facing downwards,
+g is gravity, τa is the actuation torque, ρ is the pendulum
+density, a is the width, b is the height, l is the full length
+of the pendulum. For the base case of our pendulum, the
+values of these parameters are ( g = 9.80665m/s2, ρ =
+1000kg/m3, a = 0 .02m, b = 0 .02m, l = 0 .2m, and
+|τa|≤ 0.05N·m as a torque limit).
+Fig.2B shows the training data collection process. During
+training, the pendulum is dropped from an initial angle
+of (θ0 = π− 0.1rad) without external actuation ( τa =
+0N·m) and is able to swing-freely. This simple training
+method highlights the reservoir’s ability to emulate the
+robot’s inverse dynamics through passive data collection. For
+default cases, the pendulum is free-dropped in simulation
+for 20 seconds, from which we collected the robot’s state
+x = [θ; ˙θ; ¨θ] at a timestep of 0.01s and its delayed version
+(x(t),x (t +δ),x (t + 5δ)), where δ = 0.1s.
+C. Training a reservoir controller
+Although derived from the same training data, the training
+process is divided into two distinct stages: first, training for
+actuation torque, and second, training to plan the pendulum’s
+target state.
+1) Training for Applied Torque: Training the reservoir to
+control the pendulum requires the robot’s state data with a
+short delay, (x(t),x (t +δ)), along with an approximation of
+the target torque, Tτ . In this setup, the reservoir learns to
+transition the robot from its current state, x(t), to a desired
+future state, x(t +δ), by generating a torque command, τa.
+Since the reservoir lacks an accurate model of the robot,
+it must approximate this torque, and while the true moment
+of inertia is I = 0.0011 kg· m2, Tτ is estimated as Tτ = ˜I ¨θ
+where ˜I = 0.01 kg· m2, a flexible assumption as elaborated
+in Sec. V-C. Consequently, for mapping to desired torque,
+the input and target signals for Eq. 5 are:
+In =
+
+
+θ(t)
+˙θ(t)
+θ(t +δ)
+˙θ(t +δ)
+0
+0
+
+
+, TOut(1) =
+Tτ(t)
+. (7)
+2) Training for Planned Robot State: Training the reser-
+voir to plan the pendulum’s trajectory requires the robot’s
+state data with both a short and long delay ( x(t),x (t +
+δ),x (t + 5δ)). In this case, the reservoir learns to predict
+the middle intermediary ’planned’ state x(t +δ) between
+the given current state x(t) and the final state x(t + 5δ).
+Therefore, the input signal and target signal are:
+In =
+
+
+θ(t)
+˙θ(t)
+0
+0
+θ(t + 5δ)
+˙θ(t + 5δ)
+
+
+, TOut(2) =
+θ(t +δ)
+˙θ(t +δ)
+
+. (8)
+D. During Control
+𝑐𝑜𝑛𝑠𝑡
+𝜃
+ሶ𝜃
+𝜃𝐼𝑛
+∗
+ሶ𝜃𝐼𝑛
+∗
+𝜃𝑟∗
+ሶ𝜃𝑟∗
+𝑊𝑂𝑢𝑡
+Robot
+𝑆1
+𝑆2
+𝑆3
+𝑆4
+𝑆1 𝑆2
+𝑆3 𝑆4
+𝜃
+ሶ𝜃
+𝜃
+ሶ𝜃𝜃𝑂𝑢𝑡
+∗
+ሶ𝜃𝑂𝑢𝑡
+∗
+Reservoir
+𝜏𝑎
+Fig. 3. Data structure of the reservoir controller. The reservoir node 1
+receives pendulum angle θ, and node 3 receives ˙θ. The reservoir state of
+four nodes, together with other inputs, are linearly combined by the weight
+matrix WOut to generate outputs.
+During control, the reservoir controller produces 3 outputs
+(Nout): one for the immediate actuation torque (Eq. 7) and
+3825
+Authorized licensed use limited to: Queen Mary University of London. Downloaded on March 03,2026 at 20:45:49 UTC from IEEE Xplore.  Restrictions apply. 
+
+two for the intermediary planned state (Eq. 8). Both functions
+share only the inputs θ and ˙θ. Therefore, to enable the same
+reservoir to be used for both applications, the ESN receives
+onlyθ and ˙θ as inputs to its recurrent neural network, while
+other inputs are directly connected to the output layer (see
+Fig. 3).
+Assuming the temporary target state is θ∗
+In and ˙θ∗
+In , the
+final target state is θ∗
+r and ˙θ∗
+r, and the reservoir planned state
+is θ∗
+Out and ˙θ∗
+Out, we have the overall input weight matrix,
+input, and output as:
+WIn =
+
+
+1 0
+−1 0
+0 1
+0 −1
+
+, In =
+θ
+˙θ
+
+, Out =
+
+
+τa
+θ∗
+Out
+˙θ∗
+Out
+
+, (9)
+where the actuation torque τa is clipped to satisfy |τa|≤
+0.05N· m, as the reservoir controller may generate outputs
+exceeding this limit.
+During the pendulum swing-up, the reservoir’s planned
+intermediary state, θ∗
+Out and ˙θ∗
+Out, is used as the temporary
+target for deducing actuation torque as in Eq.7. Once the
+pendulum is sufficiently close to the final target, the control
+objective switches from the predicted state to the final target,
+allowing the reservoir to transition to a balancing phase. This
+can be mathematically expressed as:
+[θ∗
+In; ˙θ∗
+In] =
+(
+[θ∗
+Out; ˙θ∗
+Out], for|θ∗
+r−θ|≥ π
+4
+[θ∗
+r; ˙θ∗
+r], for|θ∗
+r−θ|< π
+4
+(10)
+IV. RESULTS
+We begin by analyzing one ESN’s (ESN 1) ability to per-
+form the swing-up and balancing tasks required for a torque-
+restricted pendulum to reach the desired angle, π, using the
+proposed framework. Additionally, we compare this method
+to the DDPG approach in terms of efficiency and control
+performance, highlighting the strengths and limitations of
+reservoir-based control.
+A. Balancing and Motion Prediction
+A B
+Fig. 4. Example of pendulum control. (A) The pendulum is fully actuated
+and the reservoir controller aims to balance θ between [−π,π ]. (B) The
+pendulum is torque-restrictedτlim = 0.05 N m and the reservoir is planning
+a path θ∗
+Out from the initial state θ(0) = 0 to the final target state θ∗
+r =π.
+Fig. 4 evaluates the balancing and swing-up performance
+of the first successful reservoir. When provided with suffi-
+cient torque (Fig. 4A), the controller successfully balances
+the pendulum across the full range of motion, θ∗
+r∈ [−π,π ].
+Under torque-limited conditions (Fig. 4B), the reservoir
+adapts by planning an intermediate state, as evidenced by the
+increasing waveform amplitude. When combined, as shown
+in Fig. 6, the combination of swing-up and balancing enables
+a complete control path, allowing the pendulum to reach
+any angle within the full range of motion, even when full-
+actuation torque is insufficient.
+B. Robot Operation Time: Reservoir Computing vs. Rein-
+forcement Learning
+DDPG is a benchmark model-free controller for torque-
+limited single pendulums. Similar to ESN 1, the actuation
+torqueτa is clipped to comply with the torque limits after be-
+ing generated by the DDPG controller. We used its Simulink
+implementation to control the same torque-limited baseline
+system and compared its performance to ESN 1 in terms of
+mean squared error (MSE) and training time, highlighting its
+distinct advantages. Training time is defined as the product
+of episode length and the number of episodes for DDPG,
+whereas for the ESN, it corresponds to the total simulation
+time used to collect the training data in Eq. 5, which, in our
+optimal case, is just 12 seconds.
+      
+            
+  
+ 
+ 
+ 
+ 
+ 
+            
+                    
+    
+            
+         
+   
+           
+        
+Fig. 5. Datasize comparison between DDPG and ESN 1. The x-axis is
+the logged robot operation time (t) required by training data, and the y-
+axis is the logged MSE (e) for control. The dots indicate each episode of
+DDPG and ESN. The triangles indicate the first successful trial to swing
+the pendulum upwards. The hexagrams indicate the trial that has minimum
+MSE.
+Fig. 5 compares the robot operation time required for
+training between ESN 1 and DDPG. The first successful
+swing-up attempt occurs at (t = 12s,e = 1.65) for ESN1 and
+(t = 2300s, e = 2.30) for DDPG. The best performance is
+achieved at (t = 68s, e = 1.15) for ESN 1 and (t = 82060s,
+e = 0.25) for DDPG.
+These results indicate that ESN 1 requires only 0.52% of
+the robot operation time used by DDPG to achieve sufficient
+torque-limited pendulum control. While DDPG ultimately
+achieves a lower minimum control error, this small improve-
+ment comes at the cost of significantly longer training time,
+suggesting that our RC framework is the preferable choice
+under training time constraints.
+3826
+Authorized licensed use limited to: Queen Mary University of London. Downloaded on March 03,2026 at 20:45:49 UTC from IEEE Xplore.  Restrictions apply. 
+
+V. ANALYSIS
+Using the reservoir computing framework, we can analyze
+how reservoir structure influences control performance and
+understand how the reservoir is able to emulate the robot
+dynamics and perform control. While the hyperparameters
+remain standardized, the internal reservoir structure varies
+due to the random initialization of Wr, leading to differences
+in control effectiveness. To systematically evaluate these
+effects, we generated 1,000 successful ESNs with unique
+random interconnections under specified hyperparameters
+(N = 4 , τ = 0.085, spectral radius = 1.1, connectivity
+= 0.5, and regularization coefficient β = 0.1). Using above
+hyperparameters, the control success rate of randomly gener-
+ated reservoirs is approximately 5%. Methods for improving
+this rate through hyperparameter optimization have been
+proposed in [16]. This section examines the characteristics
+of successful reservoirs and their robustness to variations in
+the robot’s properties. Among the generated ESNs, the first
+working model, ESN 1, is used as a representative case to
+evaluate reservoir control performance and robustness.
+A
+B
+Fig. 6. Control performance of random ESNs. These ESNs have different
+interconnectionsWr, therefore swinging the pendulum up in various ways,
+summarized to monotonically (A) and non-monotonically (B) increasing the
+waveform amplitude.
+Given the 1,000 successful ESNs, control performance
+varies significantly, as shown in Fig. 6. Despite all seven
+selected ESNs successfully swinging up and balancing the
+pendulum, their control strategies and performance differ,
+highlighting how the interaction between the reservoir and
+the pendulum shapes control behavior.
+Fig. 6A shows that ESN 1, ESN2, and ESN 3 achieve con-
+trol through varying rates of monotonic amplitude increase.
+In contrast, Fig. 6B illustrates that ESN 4 through ESN 7
+exhibit non-monotonic amplitude growth, demonstrating how
+different reservoir structures result in distinct control char-
+acteristics. For instance, ESN 4 experiences overshoot due
+to aggressive amplitude increases, while ESN 5 follows a
+uniquely low-frequency trajectory. The trajectory of ESN 7
+resembles a combination of multiple waveforms, whereas
+ESN6 represents a shorter variation of this pattern.
+These variations in control performance emphasize the
+dependency of control strategies on reservoir structure, il-
+lustrating how different reservoirs capture varying degrees
+of robot dynamics.
+A. Reservoir Interconnections
+    
+    
+ 
+ 
+ 
+   
+    
+     
+     
+     
+     
+    
+    
+     
+    
+    
+     
+    
+     
+    
+     
+    
+  
+  
+                        
+    
+    
+ 
+ 
+ 
+   
+   
+   
+   
+   
+   
+   
+   
+   
+   
+   
+   
+      
+      
+   
+  
+  
+                     
+A
+B
+𝜃
+ሶ𝜃
+𝜃
+ሶ𝜃
+Rare
+Frequent
+Positive Negative Positive
+Fig. 7. The interconnections of 1,000 randomly generated ESNs that can
+swing the pendulum up. (A) The frequency of a connection occurrence and
+(B) the mean connection strength. Given the term ˙s∼ Wrs in update
+function Eq.1, the connection is from column to row.
+Fig. 7 illustrates the interconnection distribution among
+the 1,000 successful ESNs, suggesting successful reservoirs
+display distinct characteristics, with deviations from this
+main structure causing the variations in control performance
+as shown in Fig. 6. With a connectivity hyperparameter of
+0.5, the expected mean occurrence of connections between
+nodes is approximately 500. However, as shown in Fig. 7A,
+the actual connection occurrences among working ESNs are
+closer to 400, suggesting that the torque-restricted control
+task favors ESNs with sparser interconnections.
+Additionally, connections between nodes 1 and 2 occur
+less frequently than those from nodes 3 and 4 to nodes 1
+and 2, indicating a greater reliance on connections directly
+related to angular velocity.
+Fig. 7B shows the mean connection strength between
+nodes, suggesting that a specific reservoir structure is pre-
+ferred for successful dynamic encapsulation. Uniformly gen-
+erating interconnections, the mean strength should be ap-
+proximately 0. However, clear preferences in connection
+strength are displayed indicating a structural bias. In general,
+connections between adjacent nodes (e.g., nodes 1–2) are
+negative, whereas connections between non-adjacent nodes
+(e.g., nodes 2–4) are positive, indicating a strong structural
+preference for success.
+3827
+Authorized licensed use limited to: Queen Mary University of London. Downloaded on March 03,2026 at 20:45:49 UTC from IEEE Xplore.  Restrictions apply. 
+
+Notably, all self-recurrent connections are positive, while
+the majority of non-recurrent ones are negative, suggesting
+a temporal dependency in which certain past inputs are
+retained and others suppressed to achieve effective control.
+B. Robustness: Varying Torque Limit
+The default torque limit used previously,τlim = 0.05 N·m,
+allows the pendulum to balance within[−38.7◦, 38.7◦]. How-
+ever, this limit remains relatively large for single pendulums.
+To assess the robustness of the proposed reservoir controller
+ESN1 under more constrained conditions, we reduced τlim
+to 0.02 N·m, restricting the balance range to [−14.5◦, 14.5◦].
+A
+B
+Fig. 8. Robustness against various torque limit τlim. (A) The robot
+trajectories and (B) the actuation torque τa provided by reservoir controller
+ESN1.
+Fig. 8 shows that ESN 1 successfully performed swing-
+up and balancing without additional training across a wide
+range of imposed torque limits, τlim ∈ [0.02, 0.05] N·m.
+As expected, smaller torque limits led to longer times for
+the pendulum to reach the desired angle. Nevertheless, all
+values within this range ultimately enabled the pendulum to
+reach the target angle through a combination of swing-up
+and balancing.
+Fig. 8B further illustrates how torque limits influence
+control behavior. Smaller torque limits lead to lower torque
+switch frequencies, demonstrating the reservoir’s adaptability
+to imposed constraints and different robot states. Notably,
+the torque switch frequency is initially high at the start of
+the motion but gradually decreases over time, reflecting the
+system’s stabilization as the pendulum approaches its target
+state.
+C. Robustness: Varying Pendulum Properties
+The default robot parameters used throughout are ρ =
+1000 kg/m3 andl = 0.2 m. According to Eq. 7, the reservoir
+is trained to balance the pendulum based on an estimated
+moment of inertia, which is fixed throughout this section.
+Therefore changing the true moment of inertia and fixing
+the estimate indicates the controller’s robustness to varying
+pendulum properties. Since ρ influences this estimation,
+varying it from 10% to 500% introduces estimation errors,
+allowing us to assess their impact on control performance.
+Similarly, as shown in Eq. 6, l is the primary parameter
+governing the robot’s dynamics. By varying l from 25% to
+200%, we evaluate the reservoir’s ability to generalize across
+different dynamical systems in torque-restricted control. To
+assess robustness, we test the reservoir controller under two
+conditions: using a pre-trained reservoir and re-training it for
+each variation of parameters.
+A B
+Fig. 9. Robustness against various pendulum density ρ and length l. The
+heatmap shows logged MSE (e), and the white area indicates the failure of
+swinging the pendulum up. (A) The case where ESN 1 is pre-trained with a
+default pendulum ρ = 1000 kg/m3 l = 0.2 m and reservoir tested control
+errors on various pendulums. (B) The case where ESN 1 is retrained for each
+pendulum and tested corresponding control errors.
+1) Pre-training the Reservoir: Fig. 9A shows the robust-
+ness of a pre-trained ESN 1 across varying pendulum lengths
+and densities. The output weights WOut are pre-trained on
+a default pendulum (ρ = 1000 kg/m3,l = 0.2 m) and remain
+fixed for different robot parameters. Control errore increases
+significantly with l but remains largely unaffected by ρ.
+White streaks in the graph indicate parameter combinations
+where control fails, with l slightly increasing alongside ρ,
+suggesting joint effects of torque estimation errors and robot
+dynamics. ESN 1 achieves control for l from 25% to 200%
+and ρ from 10% to 500%, with shorter l enabling control
+up to 5000% of the default ρ. As l increases, the maximum
+feasible ρ decreases, reaching 2400% at l = 200%.
+2) Re-training the Reservoir: Fig. 9B shows the robust-
+ness of a re-trained ESN1. For each parameter variation, new
+training data are collected to update WOut, while all other
+parameters, including WIn and Wr, are retained from the
+original ESN 1. Retraining stabilizes control error across all
+feasible l and ρ, but significantly narrows the controllable l
+range to 45%–110%. In contrast,ρ remains fully controllable
+from 10% to 5000% regardless of l, indicating a higher
+robustness when changing ρ compared to l.
+VI. CONCLUSIONS
+In our work, we developed a training framework to enable
+a reservoir computer to act as a model-free controller for a
+torque-limited single pendulum, a substantial improvement
+upon the fully actuated reservoir computing-based control
+method case as described [1]. Compared with traditional
+model-free controllers, our proposed reservoir controller sig-
+nificantly reduces the amount of data required for training -
+3828
+Authorized licensed use limited to: Queen Mary University of London. Downloaded on March 03,2026 at 20:45:49 UTC from IEEE Xplore.  Restrictions apply. 
+
+with ESN1 only taking 0.52% of the robot operation time re-
+quired by DDPG. Furthermore, the data collection method is
+simple, allowing for data collection from freely dropping of
+the pendulum. This new method addresses current challenges
+faced in torque-restricted robot control: the requirement of
+an accurate model or large data size.
+We created 1,000 successful ESNs to show that successful
+reservoir controllers are reproducible using our framework.
+Besides, these functional ESNs show clear preferences in
+interconnection structures, see Fig.7. Furthermore, ESNs
+with a small number of nodes, in this case 4, can still achieve
+stable control, indicating the requirement for memory and
+nonlinearity might be low for pendulum control. Consequen-
+tially, the use of small reservoirs to control robots becomes
+an economical choice to reduce computational resources
+requirements.
+Our proposed ESN 1 controller is robust against varying
+torque limits, pendulum lengths, and mass densities, indi-
+cating the generalizability of reservoirs in encapsulating dy-
+namics. The comparison between pre-trained and re-trained
+reservoirs in Fig. 9 shows that a reservoir pre-trained with
+quality data can be more robust than a re-trained one. This
+is likely due to a mismatch between the reservoir and robot
+dynamics during re-training, suggesting a key insight for
+reservoir controllers: in many cases, it is preferable to either
+use a well-pretrained reservoir or train a completely new one
+rather than re-training an existing controller.
+Although the selection of reservoir hyperparameters for
+control tasks has been explored in [16], the influence of
+control-related parameters specific to the pendulum system
+remains under-investigated. For instance, the longest delayed
+state used in the reservoir input isx(t+5δ), and the actuation
+torque is estimated using an approximate moment of inertia,
+denoted as ˜I.
+We choose 5δ = 0.5 s based on the natural dynamics of
+the system: a pendulum of length 0.2 m undergoes one full
+cycle of free fall in approximately 1 s, as demonstrated in the
+appendix video. Thus, 5δ = 0.5 s aligns with half a swing
+cycle. Assuming the state x(t) corresponds to the positive
+peak of θ, then x(t + 5δ) approximates the negative peak,
+while x(t +δ) becomes their intermediate. This temporal
+structure provides diverse training data that supports the
+reservoir in learning a feasible swing-up trajectory. The
+performance of the re-trained reservoir shown in Fig. 9B
+likely reflects this effect: the swing-up success may be more
+sensitive to the pendulum’s length, since it directly affects the
+timescale of the motion and thus the temporal resolution of
+the training data, than to its mass, which does not influence
+the timescale. Nonetheless, a more systematic investigation
+is needed to understand why a delay of +5δ is sufficient for
+enabling swing-up behavior.
+To estimate the required actuation torque, we use a sim-
+plified relation: Tτ = ˜I ¨θ. This approximation assumes a
+direct proportionality between torque and angular acceler-
+ation, while neglecting Coriolis, gravitational, and damping
+effects, which are unknown in the absence of an explicit
+model. We select ˜I = 0 .01 kg · m2, approximately an
+order of magnitude larger than the actual moment of inertia
+of the pendulum, to overcome these unmodeled effects.
+However, the precise system response to τa = Tτ remains
+to be characterized, and future work is needed to model the
+system dynamics and rigorously assess stability under this
+approximation.
+There are still some drawbacks to using reservoir con-
+trollers. As shown in Fig. 5, while ESN 1 requires signif-
+icantly less robot operation time than DDPG to achieve
+control, it tends to converge to a local minimum over
+time, whereas DDPG has a higher likelihood of finding the
+global minimum of control errors. Additionally, the current
+application of the proposed model is limited to mapping a
+reservoir onto a torque-restricted pendulum.
+To address these limitations, future work will focus on
+extending the RC framework to more complex nonlinear
+robotic systems, requiring a deeper understanding of the
+relationship between reservoir structure and controller per-
+formance. While the current results are promising, they are
+empirically derived, and analytical solutions may be neces-
+sary to assess whether a controller can sufficiently capture
+a robot’s dynamics—an essential step in advancing this
+method. Moreover, although simulated examples effectively
+illustrate the principle, real-world experiments will be crucial
+for validating practical applications, where unknown factors
+such as signal noise may impact controller performance.
+Additionally, when a physical reservoir is employed, such
+as the Bernoulli-Ball system [35] or a traffic network [36],
+inherent stochasticity within the reservoir may also influence
+system performance.
+REFERENCES
+[1] Z.-M. Zhai, M. Moradi, L.-W. Kong, B. Glaz, M. Haile, and Y .-C. Lai,
+“Model-free tracking control of complex dynamical trajectories with
+machine learning,” Nature communications , vol. 14, no. 1, p. 5698,
+2023.
+[2] M. Yan, C. Huang, P. Bienstman, P. Tino, W. Lin, and J. Sun,
+“Emerging opportunities and challenges for the future of reservoir
+computing,” Nature Communications, vol. 15, no. 1, p. 2056, 2024.
+[3] J. Hwangbo, J. Lee, A. Dosovitskiy, D. Bellicoso, V . Tsounis,
+V . Koltun, and M. Hutter, “Learning agile and dynamic motor skills
+for legged robots,” Science Robotics, vol. 4, no. 26, p. eaau5872, 2019.
+[4] W. Li and E. Todorov, “Iterative linear quadratic regulator design
+for nonlinear biological movement systems,” in First International
+Conference on Informatics in Control, Automation and Robotics ,
+vol. 2, pp. 222–229, SciTePress, 2004.
+[5] E. Todorov and W. Li, “A generalized iterative lqg method for locally-
+optimal feedback control of constrained nonlinear stochastic systems,”
+in Proceedings of the 2005, American Control Conference, 2005. ,
+pp. 300–306, IEEE, 2005.
+[6] C. R. Hargraves and S. W. Paris, “Direct trajectory optimization using
+nonlinear programming and collocation,” Journal of guidance, control,
+and dynamics, vol. 10, no. 4, pp. 338–342, 1987.
+[7] C. Mastalli, R. Budhiraja, W. Merkt, G. Saurel, B. Hammoud,
+M. Naveau, J. Carpentier, L. Righetti, S. Vijayakumar, and
+N. Mansard, “Crocoddyl: An efficient and versatile framework for
+multi-contact optimal control,” in 2020 IEEE International Conference
+on Robotics and Automation (ICRA) , pp. 2536–2542, IEEE, 2020.
+[8] Z.-S. Hou and Z. Wang, “From model-based control to data-driven
+control: Survey, classification and perspective,” Information Sciences,
+vol. 235, pp. 3–35, 2013.
+[9] L. P. Kaelbling, M. L. Littman, and A. W. Moore, “Reinforcement
+learning: A survey,” Journal of artificial intelligence research , vol. 4,
+pp. 237–285, 1996.
+3829
+Authorized licensed use limited to: Queen Mary University of London. Downloaded on March 03,2026 at 20:45:49 UTC from IEEE Xplore.  Restrictions apply. 
+
+[10] T. Lillicrap, “Continuous control with deep reinforcement learning,”
+arXiv preprint arXiv:1509.02971 , 2015.
+[11] T. Haarnoja, A. Zhou, P. Abbeel, and S. Levine, “Soft actor-critic: Off-
+policy maximum entropy deep reinforcement learning with a stochastic
+actor,” in International conference on machine learning , pp. 1861–
+1870, PMLR, 2018.
+[12] D. Yarats, A. Zhang, I. Kostrikov, B. Amos, J. Pineau, and R. Fergus,
+“Improving sample efficiency in model-free reinforcement learning
+from images,” in Proceedings of the aaai conference on artificial
+intelligence, vol. 35, pp. 10674–10681, 2021.
+[13] W. Zhao, J. P. Queralta, and T. Westerlund, “Sim-to-real transfer in
+deep reinforcement learning for robotics: a survey,” in 2020 IEEE
+symposium series on computational intelligence (SSCI) , pp. 737–744,
+IEEE.
+[14] T. Haarnoja, B. Moran, G. Lever, S. H. Huang, D. Tirumala, J. Hump-
+lik, M. Wulfmeier, S. Tunyasuvunakool, N. Y . Siegel, R. Hafner,
+M. Bloesch, K. Hartikainen, A. Byravan, L. Hasenclever, Y . Tassa,
+F. Sadeghi, N. Batchelor, F. Casarini, S. Saliceti, C. Game, N. Sreen-
+dra, K. Patel, M. Gwira, A. Huber, N. Hurley, F. Nori, R. Hadsell, and
+N. Heess, “Learning agile soccer skills for a bipedal robot with deep
+reinforcement learning,” Science Robotics, vol. 9, no. 89, p. eadi8022,
+2024.
+[15] B. Schrauwen, D. Verstraeten, and J. Van Campenhout, “An overview
+of reservoir computing: theory, applications and implementations,”
+in Proceedings of the 15th european symposium on artificial neural
+networks. p. 471-482 2007 , pp. 471–482.
+[16] F. Ye, A. Abdulali, K.-F. Chu, X. Zhang, and F. Iida, “Reservoir
+controllers design though robot-reservoir timescale alignment,” Com-
+munications Engineering, vol. 4, pp. 1–12, Apr. 2025.
+[17] C. Giannetto, I. Atadjanov, F. Iida, and A. Abdulali, “Reservoir Com-
+puting Encodes Physical Adaptations for Reinforcement Learning,”
+in 2025 IEEE International Conference on Robotics and Automation
+(ICRA), IEEE, 2025.
+[18] E. Antonelo, B. Schrauwen, and D. Stroobandt, “Modeling multiple
+autonomous robot behaviors and behavior switching with a single
+reservoir computing network,” in 2008 IEEE International Conference
+on Systems, Man and Cybernetics , pp. 1843–1848, IEEE.
+[19] E. A. Antonelo and B. Schrauwen, “On learning navigation behaviors
+for small mobile robots with reservoir computing architectures,” IEEE
+transactions on neural networks and learning systems , vol. 26, no. 4,
+pp. 763–780, 2014.
+[20] K. Inoue, K. Nakajima, and Y . Kuniyoshi, “Designing spontaneous
+behavioral switching via chaotic itinerancy,” Science advances, vol. 6,
+no. 46, p. eabb3989, 2020.
+[21] D. Canaday, A. Pomerance, and D. J. Gauthier, “Model-free control
+of dynamical systems with deep reservoir computing,” Journal of
+Physics: Complexity, vol. 2, no. 3, p. 035025, 2021.
+[22] H. Hauser, A. J. Ijspeert, R. M. F ¨uchslin, R. Pfeifer, and W. Maass,
+“Towards a theoretical foundation for morphological computation with
+compliant bodies,” Biological cybernetics , vol. 105, pp. 355–370,
+2011.
+[23] H. Hauser and G. Griesbacher, “Moving a robot arm by exploiting
+its complex compliant morphology,” in Proceedings of the 2nd In-
+ternational Conference on Morphological Computation , University of
+Zurich.
+[24] R. Gencay and T. Liu, “Nonlinear modelling and prediction with feed-
+forward and recurrent networks,” Physica D: Nonlinear Phenomena ,
+vol. 108, no. 1-2, pp. 119–134, 1997.
+[25] H. Jaeger, “Short term memory in echo state networks,” 2001.
+[26] H. Jaeger and H. Haas, “Harnessing nonlinearity: Predicting chaotic
+systems and saving energy in wireless communication,” science,
+vol. 304, no. 5667, pp. 78–80, 2004.
+[27] H. Jaeger, “The “echo state” approach to analysing and training
+recurrent neural networks-with an erratum note,” Bonn, Germany:
+German National Research Center for Information Technology GMD
+Technical Report, vol. 148, no. 34, p. 13, 2001.
+[28] C. J. C. H. Watkins and P. Dayan, “Q-learning,” Machine Learning ,
+vol. 8, pp. 279–292, May 1992.
+[29] J. Schulman, F. Wolski, P. Dhariwal, A. Radford, and O. Klimov,
+“Proximal Policy Optimization Algorithms,” Aug. 2017.
+[30] Y . Kim, H. Oh, J. Lee, J. Choi, G. Ji, M. Jung, D. Youm, and
+J. Hwangbo, “Not Only Rewards but Also Constraints: Applications on
+Legged Robot Locomotion,” IEEE Transactions on Robotics , vol. 40,
+pp. 2984–3003, 2024.
+[31] J. Lee, L. Schroth, V . Klemm, M. Bjelonic, A. Reske, and M. Hutter,
+“Evaluation of Constrained Reinforcement Learning Algorithms for
+Legged Locomotion,” Sept. 2023.
+[32] E. Chane-Sane, P.-A. Leziart, T. Flayols, O. Stasse, P. Sou `eres, and
+N. Mansard, “CaT: Constraints as Terminations for Legged Loco-
+motion Reinforcement Learning,” in 2024 IEEE/RSJ International
+Conference on Intelligent Robots and Systems (IROS) , pp. 13303–
+13310, Oct. 2024.
+[33] S. Fujimoto, H. Hoof, and D. Meger, “Addressing function approxi-
+mation error in actor-critic methods,” in International conference on
+machine learning, pp. 1587–1596, PMLR, 2018.
+[34] M. Luko ˇseviˇcius, A practical guide to applying echo state networks ,
+pp. 659–686. Springer, 2012.
+[35] F. Ye, A. Abdulali, and F. Iida, “Evaluation of The Stochasticity in The
+Collective Bernoulli-ball System as A Physical Reservoir Computer,”
+IOP Conference Series: Materials Science and Engineering, vol. 1321,
+p. 012012, Dec. 2024.
+[36] K.-F. Chu, F. Ye, A. Abdulali, and F. Iida, “Enhancing traffic
+dynamics-induced machine learning through heterogeneous driving
+policies,” npj Unconventional Computing , vol. 2, p. 18, July 2025.
+3830
+Authorized licensed use limited to: Queen Mary University of London. Downloaded on March 03,2026 at 20:45:49 UTC from IEEE Xplore.  Restrictions apply. 

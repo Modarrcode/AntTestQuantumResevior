@@ -1,0 +1,21 @@
+Improved RC Training Results
+============================================================
+
+Friction 0.5:
+  CPG:  2.717m
+  RC:   0.873m
+  Ratio: 32.14%
+  Model: improved_rc_model\improved_rc_friction_0.5.pkl
+
+Friction 1.0:
+  CPG:  4.022m
+  RC:   3.075m
+  Ratio: 76.45%
+  Model: improved_rc_model\improved_rc_friction_1.0.pkl
+
+Friction 1.5:
+  CPG:  2.832m
+  RC:   2.190m
+  Ratio: 77.33%
+  Model: improved_rc_model\improved_rc_friction_1.5.pkl
+

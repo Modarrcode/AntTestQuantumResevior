@@ -22,6 +22,36 @@ OUTPUT_DIR = "optimized_rc_80_model"
 WASHOUT = 50  # steps to discard at start of each episode
 
 
+def _get_font(size: int):
+    try:
+        return ImageFont.truetype("arial.ttf", size=size)
+    except Exception:
+        return ImageFont.load_default()
+
+
+def _duty_cycle_wave(phase, duty_factor: float):
+    """Asymmetric cyclic wave with longer stance than swing.
+
+    phase is expected in radians. duty_factor is the fraction of the cycle
+    spent in the first half-cycle (stance). Values above 0.5 keep the leg
+    grounded longer than it is in swing.
+    """
+    duty = float(np.clip(duty_factor, 0.51, 0.9))
+    phase = np.asarray(phase, dtype=np.float64)
+    cycle = np.mod(phase, 2.0 * np.pi) / (2.0 * np.pi)
+    wave = np.empty_like(cycle)
+
+    stance_mask = cycle < duty
+    if np.any(stance_mask):
+        stance_phase = cycle[stance_mask] / duty
+        wave[stance_mask] = np.cos(np.pi * stance_phase)
+    if np.any(~stance_mask):
+        swing_phase = (cycle[~stance_mask] - duty) / (1.0 - duty)
+        wave[~stance_mask] = -np.cos(np.pi * swing_phase)
+
+    return wave
+
+
 def _save_checkpoint(tag, **kwargs):
     """Save a lightweight checkpoint of the current training state.
     The function is defensive about missing values so it can be called
@@ -121,7 +151,7 @@ def get_forward_progress(env, start_x: float, start_y: float, previous_progress:
         com = qpos
     start_pos = np.array([start_x, start_y], dtype=float)
     displacement = max(np.linalg.norm(qpos - start_pos), np.linalg.norm(com - start_pos))
-    return max(previous_progress, float(displacement))
+    return max(previous_progress, displacement)
 
 
 def _parse_switch_sequence(raw_sequence):
@@ -137,6 +167,92 @@ def _parse_switch_sequence(raw_sequence):
         except ValueError:
             continue
     return values
+
+def build_four_leg_gait(mu: float, n_actions: int = 8, gait_style: str = "walk"):
+    """Construct a coordinated four-leg gait CPG for Ant.
+
+    The action ordering is treated as hip/knee pairs per leg:
+    [FL_hip, FL_knee, FR_hip, FR_knee, BL_hip, BL_knee, BR_hip, BR_knee].
+    The default gait is a four-beat walk so the Ant moves more like a normal
+    quadruped instead of a diagonal trot.
+    """
+    if n_actions != 8:
+        raise ValueError("build_four_leg_gait expects 8 Ant actions")
+
+    mu = float(mu)
+    gait_style = str(gait_style).lower().strip()
+    if gait_style == "trot":
+        omega = 1.85 + 0.18 * (mu - 0.5)
+        hip_amp = 0.52 + 0.05 * (mu - 0.5)
+        knee_amp = 0.34 + 0.03 * (mu - 0.5)
+        hip_offset = 0.06
+        knee_offset = -0.28
+        leg_phases = np.array([0.0, np.pi, np.pi, 0.0], dtype=np.float64)
+        phase_offset = 0.85
+        duty_factor = 0.58
+        direction = -1.0
+    else:
+        # Keep the 0.5 gait gentle, but give 1.0 and 1.5 more distinct
+        # timings and amplitudes so they adapt differently.
+        if mu < 0.75:
+            omega = 1.22
+            hip_amp = 0.40
+            knee_amp = 0.45
+            hip_offset = 0.04
+            knee_offset = -0.32
+            leg_phases = np.array([0.0, 0.48 * np.pi, 0.96 * np.pi, 1.44 * np.pi], dtype=np.float64)
+            phase_offset = 1.02
+            duty_factor = 0.78
+        elif mu < 1.25:
+            # High-duty-factor lateral walk: keep the body supported by a
+            # staggered four-leg sequence instead of a diagonal pair.
+            omega = 1.60 + 0.03 * (mu - 1.0)
+            hip_amp = 0.54 + 0.03 * (mu - 1.0)
+            knee_amp = 0.72 + 0.03 * (mu - 1.0)
+            hip_offset = 0.11
+            knee_offset = -0.38
+            leg_phases = np.array([0.0, 0.18 * np.pi, 0.42 * np.pi, 0.66 * np.pi], dtype=np.float64)
+            phase_offset = 0.52
+            duty_factor = 0.74
+        else:
+            # Higher friction can take a stronger, faster walk, but keep the
+            # footfall pattern sequential rather than diagonal.
+            omega = 2.10 + 0.05 * (mu - 1.5)
+            hip_amp = 0.68 + 0.03 * (mu - 1.5)
+            knee_amp = 0.70 + 0.03 * (mu - 1.5)
+            hip_offset = 0.14
+            knee_offset = -0.34
+            leg_phases = np.array([0.0, 0.14 * np.pi, 0.36 * np.pi, 0.58 * np.pi], dtype=np.float64)
+            phase_offset = 0.46
+            duty_factor = 0.68
+        direction = -1.0
+
+    amplitudes = np.array([
+        hip_amp, knee_amp,
+        hip_amp, knee_amp,
+        hip_amp, knee_amp,
+        hip_amp, knee_amp,
+    ], dtype=np.float64) * direction
+    phases = np.array([
+        leg_phases[0], leg_phases[0] + phase_offset,
+        leg_phases[1], leg_phases[1] + phase_offset,
+        leg_phases[2], leg_phases[2] + phase_offset,
+        leg_phases[3], leg_phases[3] + phase_offset,
+    ], dtype=np.float64)
+    offsets = np.array([
+        hip_offset, knee_offset,
+        hip_offset, knee_offset,
+        hip_offset, knee_offset,
+        hip_offset, knee_offset,
+    ], dtype=np.float64) * direction
+    return CPGController(
+        n_actions=n_actions,
+        omega=omega,
+        amplitudes=amplitudes,
+        phases=phases,
+        offsets=offsets,
+        duty_factor=duty_factor,
+    )
 
 
 def _annotate_frame(frame, step, current_mu, switched=False, reason="surface",
@@ -160,7 +276,12 @@ def _annotate_frame(frame, step, current_mu, switched=False, reason="surface",
         for idx, val in enumerate(switch_values):
             x0 = int(idx / max(1, len(switch_values)) * width)
             x1 = int((idx + 1) / max(1, len(switch_values)) * width)
-            color = zone_palette[idx % len(zone_palette)]
+            if val < 0.75:
+                color = zone_palette[0]
+            elif val < 1.25:
+                color = zone_palette[1]
+            else:
+                color = zone_palette[2]
             alpha = 190 if idx == current_idx else 120
             draw.rectangle([x0, bar_y, x1, img.height - 8], fill=color + (alpha,))
             draw.line([x0, bar_y, x0, img.height - 8], fill=(255, 255, 255, 180), width=2)
@@ -168,7 +289,12 @@ def _annotate_frame(frame, step, current_mu, switched=False, reason="surface",
             draw.text((x0 + 8, bar_y + 6), label, fill=(255, 255, 255, 255), font=font)
 
         if current_idx is not None:
-            current_color = zone_palette[current_idx % len(zone_palette)]
+            if current_mu < 0.75:
+                current_color = zone_palette[0]
+            elif current_mu < 1.25:
+                current_color = zone_palette[1]
+            else:
+                current_color = zone_palette[2]
             draw.rounded_rectangle(
                 [10, img.height - bar_h - 46, 180, img.height - bar_h - 16],
                 radius=8,
@@ -184,10 +310,35 @@ def _annotate_frame(frame, step, current_mu, switched=False, reason="surface",
     return np.asarray(img.convert("RGB"))
 
 
+def _annotate_stats(frame, stats_lines, accent_color=None):
+    try:
+        img = Image.fromarray(frame).convert("RGBA")
+    except Exception:
+        return frame
+
+    draw = ImageDraw.Draw(img)
+    font = _get_font(14)
+    box_w = min(430, max(280, img.width // 2 - 20))
+    box_h = 32 + 18 * len(stats_lines)
+    box_x0 = max(10, img.width - box_w - 10)
+    box_y0 = 10
+    box_x1 = img.width - 10
+    box_y1 = min(img.height - 10, box_y0 + box_h)
+    if accent_color is None:
+        accent_color = (0, 0, 0)
+    accent_rgba = tuple(int(v) for v in accent_color[:3]) + (170,)
+    outline_rgba = tuple(min(255, int(v) + 30) for v in accent_color[:3]) + (220,)
+    draw.rounded_rectangle([box_x0, box_y0, box_x1, box_y1], radius=10, fill=accent_rgba, outline=outline_rgba, width=1)
+    for idx, line in enumerate(stats_lines):
+        draw.text((box_x0 + 10, box_y0 + 8 + idx * 18), line, fill=(255, 255, 255, 255), font=font)
+    return np.asarray(img.convert("RGB"))
+
+
 def visualize_saved_model(model_path, episode_length=500, output_gif=None,
                           switch_every=80, switch_sequence=None,
-                          render_mode="rgb_array", switch_distance=0.3, action_scale=1.2,
-                          cpg_speed_scale=1.0, cpg_amp_scale=1.0, action_smooth=0.0, cpg_mix=0.0):
+                          render_mode="rgb_array", switch_distance=0.9, action_scale=1.2,
+                          cpg_speed_scale=1.0, cpg_amp_scale=1.0, action_smooth=0.0, cpg_mix=0.0,
+                          four_leg_balance=0.06, show_stats=True, switch_hold_steps=None):
     """Load a saved RC model and record a single rollout with CPG-switch annotations."""
     if output_gif is None:
         output_gif = os.path.join(OUTPUT_DIR, "rc_switch_demo.gif")
@@ -222,6 +373,15 @@ def visualize_saved_model(model_path, episode_length=500, output_gif=None,
     if not switch_values:
         switch_values = [0.5, 1.0, 1.5]
 
+    if not switch_hold_steps:
+        equal_hold = max(1, episode_length // max(1, len(switch_values)))
+        switch_hold_steps = [equal_hold] * len(switch_values)
+    else:
+        switch_hold_steps = [int(v) for v in switch_hold_steps]
+    if len(switch_hold_steps) < len(switch_values):
+        switch_hold_steps.extend([switch_hold_steps[-1]] * (len(switch_values) - len(switch_hold_steps)))
+    switch_hold_steps = switch_hold_steps[:len(switch_values)]
+
     log.info("Visualizing saved model from %s", model_path)
     log.info("Recording GIF to %s", output_gif)
     log.info("Using multi-surface switching over %.2fm zones: %s", switch_distance, switch_values)
@@ -230,10 +390,34 @@ def visualize_saved_model(model_path, episode_length=500, output_gif=None,
     current_mu = float(switch_values[0])
     set_floor_friction(env, current_mu)
     zone_palette = [(0.22, 0.38, 0.95, 1.0), (0.95, 0.45, 0.20, 1.0), (0.18, 0.80, 0.32, 1.0)]
-    set_floor_color(env, zone_palette[0], zone_idx=0)
+    def _surface_color(mu_value):
+        if mu_value < 0.75:
+            return zone_palette[0]
+        if mu_value < 1.25:
+            return zone_palette[1]
+        return zone_palette[2]
+
+    set_floor_color(env, _surface_color(current_mu), zone_idx=0)
     if hasattr(esn, "W_out_per_friction") and current_mu in esn.W_out_per_friction:
         esn.W_out = esn.W_out_per_friction[current_mu]
     esn.reset()
+
+    def _configured_cpg(source_cpg, current_mu_value):
+        configured = CPGController(
+            n_actions=source_cpg.n,
+            omega=float(source_cpg.omega) * float(cpg_speed_scale),
+            amplitudes=np.asarray(source_cpg.amplitudes, dtype=np.float64) * float(cpg_amp_scale),
+            phases=np.asarray(source_cpg.phases, dtype=np.float64),
+            offsets=np.asarray(source_cpg.offsets, dtype=np.float64),
+        )
+        configured.duty_factor = getattr(source_cpg, "duty_factor", 0.65)
+        if current_mu_value < 0.75:
+            configured.duty_factor = 0.70
+        elif current_mu_value < 1.25:
+            configured.duty_factor = 0.82
+        else:
+            configured.duty_factor = 0.74
+        return configured
 
     obs, _ = env.reset()
     prev_obs = obs.copy()
@@ -244,43 +428,53 @@ def visualize_saved_model(model_path, episode_length=500, output_gif=None,
     current_idx = 0
     current_cpg = None
     progress = 0.0
+    episode_reward = 0.0
+    zone_step_count = 0
     zone_boundaries = [0.0] + [switch_distance * (i + 1) for i in range(len(switch_values) - 1)]
 
     for step in range(episode_length):
         switched = False
+        zone_step_count += 1
         progress = get_forward_progress(env, start_x, start_y, previous_progress=progress)
-        while current_idx + 1 < len(switch_values) and progress >= zone_boundaries[current_idx + 1]:
+        current_hold = switch_hold_steps[current_idx]
+        while current_idx + 1 < len(switch_values) and zone_step_count >= current_hold:
             next_idx = current_idx + 1
             next_mu = float(switch_values[next_idx])
             if next_mu != current_mu:
                 current_idx = next_idx
                 current_mu = next_mu
                 set_floor_friction(env, current_mu)
-                zone_palette = [(0.22, 0.38, 0.95, 1.0), (0.95, 0.45, 0.20, 1.0), (0.18, 0.80, 0.32, 1.0)]
-                set_floor_color(env, zone_palette[current_idx % len(zone_palette)], zone_idx=current_idx)
+                set_floor_color(env, _surface_color(current_mu), zone_idx=current_idx)
                 if hasattr(esn, "W_out_per_friction") and current_mu in esn.W_out_per_friction:
                     esn.W_out = esn.W_out_per_friction[current_mu]
                 esn.reset()
+                zone_step_count = 0
                 switched = True
                 log.info("  Environment changed surface -> CPG %.1f at %.2fm", current_mu, progress)
             else:
                 break
+
+        if current_idx == len(switch_values) - 1 and zone_step_count >= current_hold:
+            switched = switched or False
+            log.info("  Final surface hold reached at %.2fm after %d steps", progress, zone_step_count)
+            break
 
         vel = obs - prev_obs
         t_sec = step * 0.02
         cpg = cpg_per_friction.get(current_mu)
         if cpg is None:
             cpg = CPGController(n_actions=8)
-        else:
-            # allow temporary scaling of CPG speed/amplitude for visualization trials
-            try:
-                cpg.omega = float(cpg.omega) * float(cpg_speed_scale)
-                cpg.amplitudes = np.asarray(cpg.amplitudes) * float(cpg_amp_scale)
-            except Exception:
-                pass
-        current_cpg = cpg
-        cpg_phase = (cpg.omega * t_sec + cpg.phases).astype(np.float64)
-        cpg_out = np.clip(cpg.step(t_sec), env.action_space.low, env.action_space.high).astype(np.float64)
+        current_cpg = _configured_cpg(cpg, current_mu)
+        cpg_phase = (current_cpg.omega * t_sec + current_cpg.phases).astype(np.float64)
+        cpg_out = np.clip(current_cpg.step(t_sec), env.action_space.low, env.action_space.high).astype(np.float64)
+
+        current_action_scale = float(action_scale)
+        current_cpg_mix = float(cpg_mix)
+        current_action_smooth = float(action_smooth)
+        if current_mu >= 1.25:
+            current_action_scale *= 0.75
+            current_cpg_mix *= 0.35
+            current_action_smooth = max(current_action_smooth, 0.14)
 
         obs_aug = np.concatenate([obs, vel, cpg_phase, cpg_out, [current_mu]]).astype(np.float64)
         obs_norm = (obs_aug - X_mean) / X_std
@@ -290,27 +484,28 @@ def visualize_saved_model(model_path, episode_length=500, output_gif=None,
             obs_input = obs_norm
 
         action_norm = esn.predict(obs_input)
-        action_scaled = action_norm * action_scale
+        action_scaled = action_norm * current_action_scale
         action_unclipped = (action_scaled * Y_std + Y_mean)
         # Optionally mix a fraction of the open-loop CPG output to guarantee movement
         # and avoid short pauses where the learned controller outputs near-zero actions.
-        if 'cpg_mix' in locals() and float(cpg_mix) > 0.0:
+        if current_cpg_mix > 0.0:
             try:
-                cpg_frac = float(cpg_mix)
+                cpg_frac = current_cpg_mix
                 # cpg_out is already clipped to env.action_space earlier
                 action_unclipped = (1.0 - cpg_frac) * action_unclipped + cpg_frac * cpg_out
             except Exception:
                 pass
         # optional smoothing to avoid abrupt large jumps (visualization only)
-        if action_smooth is not None and float(action_smooth) > 0.0:
+        if current_action_smooth > 0.0:
             if prev_action_unclipped is None:
                 prev_action_unclipped = action_unclipped.copy()
-            action_unclipped = prev_action_unclipped * float(action_smooth) + action_unclipped * (1.0 - float(action_smooth))
+            action_unclipped = prev_action_unclipped * current_action_smooth + action_unclipped * (1.0 - current_action_smooth)
             prev_action_unclipped = action_unclipped.copy()
         action = np.clip(action_unclipped, env.action_space.low, env.action_space.high)
 
         prev_obs = obs.copy()
         obs, reward, term, trunc, _ = env.step(action)
+        episode_reward += float(reward)
 
         frame = env.render()
         if frame is not None:
@@ -318,6 +513,20 @@ def visualize_saved_model(model_path, episode_length=500, output_gif=None,
             if frame_arr.ndim == 2:
                 frame_arr = np.repeat(frame_arr[..., None], 3, axis=2)
             next_boundary = zone_boundaries[current_idx + 1] if current_idx + 1 < len(zone_boundaries) else zone_boundaries[-1]
+            if show_stats:
+                step_distance = get_base_x(env) - start_x
+                elapsed_sec = max(0.02, (step + 1) * 0.02)
+                avg_speed = step_distance / elapsed_sec
+                stats_lines = [
+                    f"step {step + 1}/{episode_length}   t={step * 0.02:.2f}s",
+                    f"surface {current_idx + 1}/{len(switch_values)}   mu={current_mu:.1f}",
+                    f"distance={step_distance:.3f}   reward={reward:.3f}   total={episode_reward:.3f}",
+                    f"avg_speed={avg_speed:.3f} m/s   zone_steps={zone_step_count}/{current_hold}",
+                    f"switch_progress={progress:.2f}m   next_switch={next_boundary:.2f}m",
+                    f"action_scale={current_action_scale:.2f}   cpg_speed={cpg_speed_scale:.2f}   cpg_mix={current_cpg_mix:.2f}",
+                    f"balance={four_leg_balance:.2f}   smooth={current_action_smooth:.2f}",
+                ]
+                frame_arr = _annotate_stats(frame_arr, stats_lines, accent_color=_surface_color(current_mu))
             frame_arr = _annotate_frame(
                 frame_arr,
                 step,
@@ -354,12 +563,13 @@ def visualize_saved_model(model_path, episode_length=500, output_gif=None,
 # ---------------------------------------------------------------------------
 
 class CPGController:
-    def __init__(self, n_actions, omega=2.0, amplitudes=None, phases=None, offsets=None):
+    def __init__(self, n_actions, omega=2.0, amplitudes=None, phases=None, offsets=None, duty_factor=0.65):
         self.n = n_actions
         self.omega = float(omega)
         self.amplitudes = np.ones(self.n) if amplitudes is None else np.asarray(amplitudes).reshape(self.n)
         self.phases    = np.zeros(self.n) if phases    is None else np.asarray(phases).reshape(self.n)
         self.offsets   = np.zeros(self.n) if offsets   is None else np.asarray(offsets).reshape(self.n)
+        self.duty_factor = float(duty_factor)
 
     @classmethod
     def from_vector(cls, vec, n_actions):
@@ -369,7 +579,40 @@ class CPGController:
                    vec[1+2*n_actions:1+3*n_actions])
 
     def step(self, t):
-        return self.offsets + self.amplitudes * np.sin(self.omega * t + self.phases)
+        phase = self.omega * t + self.phases
+        wave = _duty_cycle_wave(phase, getattr(self, "duty_factor", 0.65))
+        return self.offsets + self.amplitudes * wave
+
+
+def evaluate_controller(env, controller, episode_length=500):
+    """Evaluate a CPG-style controller and return forward, reward, steps, speed, slip count."""
+    obs, _ = env.reset()
+    dt = 0.02
+    start_x = get_base_x(env)
+    total_reward = 0.0
+    max_speed = 0.0
+    slip_count = 0
+    prev_x = start_x
+    for step in range(episode_length):
+        t = step * dt
+        action = np.asarray(controller.step(t)).flatten()
+        try:
+            action = np.clip(action, env.action_space.low, env.action_space.high)
+        except Exception:
+            action = np.clip(action, -1.0, 1.0)
+        obs, reward, terminated, truncated, _ = env.step(action)
+        total_reward += float(reward)
+        curr_x = get_base_x(env)
+        speed = (curr_x - prev_x) / dt
+        max_speed = max(max_speed, abs(speed))
+        prev_x = curr_x
+        if reward < -1.0 or abs(speed) < 0.01:
+            slip_count += 1
+        if terminated or truncated:
+            break
+    end_x = get_base_x(env)
+    forward = end_x - start_x
+    return forward, total_reward, step + 1, max_speed, slip_count
 
 
 def _eval_cpg_vec(env, vec):
@@ -384,37 +627,56 @@ def _eval_cpg_vec(env, vec):
         if term or trunc:
             break
     return get_base_x(env) - start_x
+def _score_cpg_vec(env, vec):
+    """Evaluate a CPG vector with a stability-aware score.
+
+    Forward progress is the main signal, measured over a longer horizon to
+    better match the 5 m target, with a modest stability penalty.
+    """
+    cpg = CPGController.from_vector(vec, 8)
+    forward, reward, _, _, slip_count = evaluate_controller(env, cpg, episode_length=1000)
+    forward_bonus = 35.0 * forward
+    slip_penalty = 0.35 * slip_count
+    still_penalty = 300.0 if forward < 2.0 else 0.0
+    return float(forward_bonus + reward - slip_penalty - still_penalty), float(forward), float(reward), int(slip_count)
 
 
 def tune_cpg(env, cpg_iters=1000):
     """Random search + hill-climbing refinement for best CPG."""
-    best_dist, best_vec = -float("inf"), None
+    best_score, best_vec = -float("inf"), None
+    best_forward, best_reward, best_slip = -float("inf"), 0.0, 0
 
     # Phase 1: random search
     for i in range(cpg_iters):
         vec = np.random.randn(25)
-        dist = _eval_cpg_vec(env, vec)
-        if dist > best_dist:
-            best_dist, best_vec = dist, vec.copy()
+        score, forward, reward, slip_count = _score_cpg_vec(env, vec)
+        if score > best_score:
+            best_score, best_vec = score, vec.copy()
+            best_forward, best_reward, best_slip = forward, reward, slip_count
         if (i + 1) % 200 == 0:
-            log.info("    CPG tune iter %d: best_dist=%.3f", i + 1, best_dist)
+            log.info("    CPG tune iter %d: best_score=%.3f forward=%.3f reward=%.3f slip=%d",
+                     i + 1, best_score, best_forward, best_reward, best_slip)
 
     # Phase 2: hill-climbing refinement (500 steps, shrinking noise)
-    log.info("    Hill-climbing from best_dist=%.3f...", best_dist)
+    log.info("    Hill-climbing from best_score=%.3f...", best_score)
     current_vec = best_vec.copy()
     sigma = 0.3
     for i in range(500):
         candidate = current_vec + np.random.randn(25) * sigma
-        dist = _eval_cpg_vec(env, candidate)
-        if dist > best_dist:
-            best_dist = dist
+        score, forward, reward, slip_count = _score_cpg_vec(env, candidate)
+        if score > best_score:
+            best_score = score
+            best_forward = forward
+            best_reward = reward
+            best_slip = slip_count
             current_vec = candidate.copy()
             best_vec = candidate.copy()
         if (i + 1) % 100 == 0:
             sigma *= 0.7
-    log.info("    After hill-climbing: best_dist=%.3f", best_dist)
+    log.info("    After hill-climbing: best_score=%.3f forward=%.3f reward=%.3f slip=%d",
+             best_score, best_forward, best_reward, best_slip)
 
-    return CPGController.from_vector(best_vec, 8), best_dist
+    return CPGController.from_vector(best_vec, 8), best_forward
 
 
 # ---------------------------------------------------------------------------
@@ -666,6 +928,9 @@ def collect_episodes(env, cpg, n_episodes=50, min_forward=1.0):
     episodes_actions = []
     good, attempts = 0, 0
     max_attempts = n_episodes * 5
+    best_forward = -float("inf")
+    best_episode_obs = None
+    best_episode_act = None
 
     while good < n_episodes and attempts < max_attempts:
         attempts += 1
@@ -690,12 +955,22 @@ def collect_episodes(env, cpg, n_episodes=50, min_forward=1.0):
                 break
 
         forward = get_base_x(env) - start_x
+        if forward > best_forward and len(ep_obs) > 0:
+            best_forward = float(forward)
+            best_episode_obs = np.array(ep_obs, dtype=np.float32)
+            best_episode_act = np.array(ep_act, dtype=np.float32)
         if forward >= min_forward:
             episodes_obs.append(np.array(ep_obs, dtype=np.float32))
             episodes_actions.append(np.array(ep_act, dtype=np.float32))
             good += 1
             if good % 10 == 0:
                 log.info("      Collected %d/%d good episodes", good, n_episodes)
+
+    if good == 0 and best_episode_obs is not None and best_episode_act is not None:
+        log.warning("      No episodes met min_forward=%.1f; keeping best fallback episode (forward=%.3f)",
+                    min_forward, best_forward)
+        episodes_obs.append(best_episode_obs)
+        episodes_actions.append(best_episode_act)
 
     log.info("      Final: %d good episodes from %d attempts", good, attempts)
     return episodes_obs, episodes_actions
@@ -867,6 +1142,7 @@ def train_optimized_rc(
     ae_hidden_dim=128,
     ae_latent_dim=64,
     ae_epochs=80,
+    gait_mode="four_leg_walk",
 ):
     os.makedirs(OUTPUT_DIR, exist_ok=True)
 
@@ -890,14 +1166,31 @@ def train_optimized_rc(
         env = gym.make("Ant-v5", render_mode="rgb_array")
         set_floor_friction(env, mu)
 
-        log.info("  Tuning CPG (%d iterations)...", cpg_iters)
-        cpg, cpg_dist = tune_cpg(env, cpg_iters=cpg_iters)
-        cpg_stats[mu] = {"forward": float(cpg_dist)}
+        if gait_mode in {"four_leg_walk", "four_leg_trot"}:
+            gait_style = "trot" if gait_mode == "four_leg_trot" else "walk"
+            log.info("  Building coordinated four-leg %s teacher...", gait_style)
+            cpg = build_four_leg_gait(mu, n_actions=env.action_space.shape[0], gait_style=gait_style)
+            cpg_dist, cpg_rew, _, cpg_max_speed, cpg_slip = evaluate_controller(env, cpg, episode_length=500)
+            cpg_stats[mu] = {
+                "forward": float(cpg_dist),
+                "reward": float(cpg_rew),
+                "max_speed": float(cpg_max_speed),
+                "slip": int(cpg_slip),
+                "mode": gait_mode,
+            }
+            log.info("  Four-leg gait teacher: forward=%.3f reward=%.3f", cpg_dist, cpg_rew)
+        else:
+            log.info("  Tuning CPG (%d iterations)...", cpg_iters)
+            cpg, cpg_dist = tune_cpg(env, cpg_iters=cpg_iters)
+            cpg_stats[mu] = {"forward": float(cpg_dist), "mode": gait_mode}
+            log.info("  CPG tuned: forward=%.3f", cpg_dist)
         cpg_per_friction[mu] = cpg
-        log.info("  CPG tuned: forward=%.3f", cpg_dist)
 
-        log.info("  Collecting %d episodes (min_forward=%.1f)...", n_episodes, min_forward)
-        eps_obs, eps_act = collect_episodes(env, cpg, n_episodes=n_episodes, min_forward=min_forward)
+        effective_min_forward = float(min_forward)
+        if gait_mode == "four_leg_walk":
+            effective_min_forward = min(effective_min_forward, -2.0)
+        log.info("  Collecting %d episodes (min_forward=%.1f)...", n_episodes, effective_min_forward)
+        eps_obs, eps_act = collect_episodes(env, cpg, n_episodes=n_episodes, min_forward=effective_min_forward)
 
         # Append friction feature to each episode's observations
         for ep_obs, ep_act in zip(eps_obs, eps_act):
@@ -1152,6 +1445,8 @@ if __name__ == "__main__":
     parser.add_argument("--ae-hidden-dim", type=int, default=128)
     parser.add_argument("--ae-latent-dim", type=int, default=64)
     parser.add_argument("--ae-epochs", type=int, default=80)
+    parser.add_argument("--gait-mode", type=str, default="four_leg_walk", choices=["four_leg_walk", "four_leg_trot", "tuned_cpg"],
+                        help="Teacher to train from: coordinated four-leg walk, four-leg trot, or tuned CPG")
     parser.add_argument("--visualize-model", action="store_true",
                         help="Load a saved model and record a single rollout with highlighted CPG switches")
     parser.add_argument("--model-path", type=str, default=os.path.join(OUTPUT_DIR, "rc_80_optimized.pkl"),
@@ -1160,8 +1455,10 @@ if __name__ == "__main__":
                         help="Optional output GIF path for the rollout recording")
     parser.add_argument("--switch-every", type=int, default=80,
                         help="Legacy step-based switch interval (kept for compatibility)")
-    parser.add_argument("--switch-distance", type=float, default=0.18,
-                        help="Distance between friction-surface zones that trigger a controller switch")
+    parser.add_argument("--switch-distance", type=float, default=0.9,
+                        help="Distance between friction-surface zones; larger values give each CPG more time to adapt")
+    parser.add_argument("--switch-hold-steps", type=str, default="",
+                        help="Comma-separated step holds per surface; leave blank to use equal time on each surface")
     parser.add_argument("--switch-sequence", type=str, default="0.5,1.0,1.5",
                         help="Comma-separated friction/CPG values to cycle through")
     parser.add_argument("--action-scale", type=float, default=1.2,
@@ -1174,6 +1471,10 @@ if __name__ == "__main__":
                         help="Smoothing factor [0..1) for visualizer actions (0=no smoothing, closer to 1 more smoothing)")
     parser.add_argument("--cpg-mix", type=float, default=0.0,
                         help="Blend factor [0..1] to mix CPG action into ESN action during visualization (helps continuous walking)")
+    parser.add_argument("--four-leg-balance", type=float, default=0.06,
+                        help="Blend factor [0..1] that synchronizes same joint types across all four legs")
+    parser.add_argument("--show-stats", action=argparse.BooleanOptionalAction, default=True,
+                        help="Show a stats HUD overlay in the rendered video")
     parser.add_argument("--episode-length", type=int, default=500,
                         help="Number of steps to render in the single rollout")
     parser.add_argument("--render-mode", type=str, default="rgb_array",
@@ -1194,6 +1495,9 @@ if __name__ == "__main__":
             cpg_amp_scale=args.cpg_amp_scale,
             action_smooth=args.action_smooth,
             cpg_mix=args.cpg_mix,
+            four_leg_balance=args.four_leg_balance,
+            show_stats=args.show_stats,
+            switch_hold_steps=_parse_switch_sequence(args.switch_hold_steps),
         )
     else:
         train_optimized_rc(
@@ -1204,4 +1508,5 @@ if __name__ == "__main__":
             ae_hidden_dim=args.ae_hidden_dim,
             ae_latent_dim=args.ae_latent_dim,
             ae_epochs=args.ae_epochs,
+            gait_mode=args.gait_mode,
         )

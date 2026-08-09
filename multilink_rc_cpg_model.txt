@@ -1,0 +1,6 @@
+Multi-link RC/CPG training summary
+Best payload mass: 0.300
+Best score: -109.557447
+payload=0.200 score=-131.115110
+payload=0.300 score=-109.557447
+payload=0.400 score=-133.976126

@@ -1,0 +1,882 @@
+From d809d85f5c841c1176c4b9dcbc5621568f33a94b Mon Sep 17 00:00:00 2001
+From: ModarrCode <modarrlock@gmail.com>
+Date: Mon, 3 Aug 2026 18:33:41 +0100
+Subject: [PATCH] Add multilink training/demo scripts and stiffer env;
+ per-payload trainers
+
+---
+ multilink_mass_robot_env.py  | 396 +++++++++++++++++++++++++++++++++++
+ retrain_boost_heavy.py       |  80 +++++++
+ run_multilink_rc_cpg_demo.py | 133 ++++++++++++
+ train_multilink_rc_cpg.py    | 146 +++++++++++++
+ train_single_payload.py      |  72 +++++++
+ 5 files changed, 827 insertions(+)
+ create mode 100644 multilink_mass_robot_env.py
+ create mode 100644 retrain_boost_heavy.py
+ create mode 100644 run_multilink_rc_cpg_demo.py
+ create mode 100644 train_multilink_rc_cpg.py
+ create mode 100644 train_single_payload.py
+
+diff --git a/multilink_mass_robot_env.py b/multilink_mass_robot_env.py
+new file mode 100644
+index 0000000..684375d
+--- /dev/null
++++ b/multilink_mass_robot_env.py
+@@ -0,0 +1,396 @@
++"""Multi-link mass robot simulation for PyBullet / Gymnasium.
++
++This version models an upright planar chain with revolute joints around the y
++axis, gravity along negative z, and configurable link masses plus an optional
++payload on the final link.
++"""
++
++from __future__ import annotations
++
++import argparse
++import logging
++import os
++import tempfile
++from pathlib import Path
++from typing import Iterable, Sequence
++
++import gymnasium as gym
++from gymnasium import spaces
++import numpy as np
++
++logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
++log = logging.getLogger(__name__)
++
++try:
++    import pybullet as p
++    import pybullet_data
++except Exception as exc:  # pragma: no cover - dependency check happens at runtime
++    p = None
++    pybullet_data = None
++    _PYBULLET_IMPORT_ERROR = exc
++else:
++    _PYBULLET_IMPORT_ERROR = None
++
++
++class MassProfile:
++    def __init__(self, link_masses: Iterable[float], payload_mass: float = 0.0):
++        self.link_masses = tuple(float(mass) for mass in link_masses)
++        self.payload_mass = float(payload_mass)
++
++    def __repr__(self) -> str:
++        return f"MassProfile(link_masses={self.link_masses}, payload_mass={self.payload_mass})"
++
++
++def _ensure_pybullet():
++    if p is None:
++        raise RuntimeError(f"pybullet is required for MultiLinkMassRobotEnv: {_PYBULLET_IMPORT_ERROR}")
++
++
++def _parse_floats(values: str | Sequence[float]) -> tuple[float, ...]:
++    if isinstance(values, str):
++        parts = [item.strip() for item in values.split(",") if item.strip()]
++        return tuple(float(item) for item in parts)
++    return tuple(float(item) for item in values)
++
++
++def _default_mass_profile(n_links: int) -> MassProfile:
++    link_masses = tuple(0.20 + 0.05 * index for index in range(n_links))
++    return MassProfile(link_masses=link_masses, payload_mass=0.25)
++
++
++def _mass_summary(profile: MassProfile) -> str:
++    masses = ", ".join(f"{mass:.2f}" for mass in profile.link_masses)
++    return f"links=[{masses}] payload={profile.payload_mass:.2f}"
++
++
++class MultiLinkMassRobotEnv(gym.Env):
++    """Upright multi-link robot with configurable attached masses."""
++
++    metadata = {"render_modes": ["human", "rgb_array"], "render_fps": 60}
++
++    def __init__(
++        self,
++        n_links: int = 4,
++        mass_profile: MassProfile | None = None,
++        segment_length: float = 0.18,
++        segment_thickness: float = 0.045,
++        max_torque: float = 24.0,
++        max_steps: int = 400,
++        render_mode: str | None = None,
++    ):
++        super().__init__()
++        _ensure_pybullet()
++
++        self.n_links = int(n_links)
++        self.segment_length = float(segment_length)
++        self.segment_thickness = float(segment_thickness)
++        self.max_torque = float(max_torque)
++        self.max_steps = int(max_steps)
++        self.render_mode = render_mode
++        self.mass_profile = mass_profile or _default_mass_profile(self.n_links)
++        if len(self.mass_profile.link_masses) != self.n_links:
++            raise ValueError(f"mass_profile.link_masses must have length {self.n_links}")
++
++        self.action_space = spaces.Box(
++            low=-self.max_torque,
++            high=self.max_torque,
++            shape=(self.n_links,),
++            dtype=np.float32,
++        )
++        obs_dim = self.n_links * 2 + 6 + self.n_links + 1
++        self.observation_space = spaces.Box(
++            low=-np.inf,
++            high=np.inf,
++            shape=(obs_dim,),
++            dtype=np.float32,
++        )
++
++        self.physics_client = p.connect(p.GUI if self.render_mode == "human" else p.DIRECT)
++        self.robot_id = None
++        self._joint_indices: list[int] = []
++        self._temp_urdf_path: Path | None = None
++        self._step_count = 0
++
++    def _make_urdf_text(self) -> str:
++        link_blocks: list[str] = []
++        joint_blocks: list[str] = []
++
++        for index, base_mass in enumerate(self.mass_profile.link_masses):
++            mass = float(base_mass + (self.mass_profile.payload_mass if index == self.n_links - 1 else 0.0))
++            is_terminal = index == self.n_links - 1
++            box_length = self.segment_length * (1.30 if is_terminal and self.mass_profile.payload_mass > 0.0 else 1.05)
++            box_height = self.segment_thickness * (1.35 if is_terminal else 1.20)
++            box_width = self.segment_thickness * (1.35 if is_terminal else 1.20)
++            link_name = f"link_{index}"
++
++            link_blocks.append(
++                f"""
++  <link name="{link_name}">
++        <inertial>
++            <origin xyz="0 0 {self.segment_length / 2:.6f}" rpy="0 0 0"/>
++            <mass value="{mass:.6f}"/>
++            <inertia ixx="0.010" ixy="0" ixz="0" iyy="0.010" iyz="0" izz="0.010"/>
++        </inertial>
++    <visual>
++      <origin xyz="0 0 {self.segment_length / 2:.6f}" rpy="0 0 0"/>
++      <geometry>
++        <box size="{box_width:.6f} {box_height:.6f} {box_length:.6f}"/>
++      </geometry>
++      <material name="link_color">
++        <color rgba="0.7 0.7 0.75 1.0"/>
++      </material>
++    </visual>
++    <collision>
++      <origin xyz="0 0 {self.segment_length / 2:.6f}" rpy="0 0 0"/>
++      <geometry>
++        <box size="{box_width:.6f} {box_height:.6f} {box_length:.6f}"/>
++      </geometry>
++    </collision>
++  </link>
++""".strip()
++            )
++
++            parent_link = "base" if index == 0 else f"link_{index - 1}"
++            joint_origin_z = 0.0 if index == 0 else self.segment_length
++            joint_blocks.append(
++                f"""
++  <joint name="joint_{index}" type="revolute">
++    <parent link="{parent_link}"/>
++    <child link="{link_name}"/>
++    <origin xyz="0 0 {joint_origin_z:.6f}" rpy="0 0 0"/>
++    <axis xyz="0 1 0"/>
++    <limit lower="-3.14159" upper="3.14159" effort="{self.max_torque:.6f}" velocity="15.0"/>
++        <dynamics damping="0.75" friction="0.06"/>
++  </joint>
++""".strip()
++            )
++
++        return f"""
++<?xml version="1.0" ?>
++<robot name="multi_link_mass_robot">
++  <link name="base">
++    <inertial>
++      <origin xyz="0 0 0" rpy="0 0 0"/>
++      <mass value="0.001"/>
++      <inertia ixx="0.001" ixy="0" ixz="0" iyy="0.001" iyz="0" izz="0.001"/>
++    </inertial>
++  </link>
++{os.linesep.join(link_blocks)}
++{os.linesep.join(joint_blocks)}
++</robot>
++""".strip()
++
++    def _write_urdf(self) -> Path:
++        if self._temp_urdf_path is not None and self._temp_urdf_path.exists():
++            try:
++                self._temp_urdf_path.unlink()
++            except OSError:
++                pass
++
++        temp_dir = Path(tempfile.mkdtemp(prefix="multilink_mass_robot_"))
++        urdf_path = temp_dir / "multilink_mass_robot.urdf"
++        urdf_path.write_text(self._make_urdf_text(), encoding="utf-8")
++        self._temp_urdf_path = urdf_path
++        return urdf_path
++
++    def _joint_state(self, index: int) -> tuple[float, float]:
++        joint_state = p.getJointState(self.robot_id, index, physicsClientId=self.physics_client)
++        return float(joint_state[0]), float(joint_state[1])
++
++    def _tip_state(self) -> tuple[np.ndarray, np.ndarray]:
++        link_index = self.n_links - 1
++        link_state = p.getLinkState(self.robot_id, link_index, computeLinkVelocity=1, physicsClientId=self.physics_client)
++        tip_pos = np.asarray(link_state[4], dtype=np.float32)
++        tip_vel = np.asarray(link_state[6], dtype=np.float32)
++        return tip_pos, tip_vel
++
++    def _mass_vector(self) -> np.ndarray:
++        return np.asarray(tuple(self.mass_profile.link_masses) + (float(self.mass_profile.payload_mass),), dtype=np.float32)
++
++    def _get_obs(self) -> np.ndarray:
++        joint_positions = []
++        joint_velocities = []
++        for index in self._joint_indices:
++            joint_pos, joint_vel = self._joint_state(index)
++            joint_positions.append(joint_pos)
++            joint_velocities.append(joint_vel)
++
++        tip_pos, tip_vel = self._tip_state()
++        obs = np.concatenate([
++            np.asarray(joint_positions, dtype=np.float32),
++            np.asarray(joint_velocities, dtype=np.float32),
++            tip_pos,
++            tip_vel,
++            self._mass_vector(),
++        ]).astype(np.float32)
++        return obs
++
++    def _reward(self, action: np.ndarray) -> float:
++        tip_pos, tip_vel = self._tip_state()
++        upright_bonus = float(max(tip_pos[2], 0.0))
++        joint_center_penalty = 0.05 * float(np.sum(np.square(self._joint_positions())))
++        torque_penalty = 0.01 * float(np.sum(np.square(action)))
++        velocity_penalty = 0.01 * float(np.sum(np.square(self._joint_velocities())))
++        tip_speed_bonus = 0.02 * float(np.linalg.norm(tip_vel))
++        return upright_bonus + tip_speed_bonus - joint_center_penalty - torque_penalty - velocity_penalty
++
++    def _joint_positions(self) -> np.ndarray:
++        return np.asarray([self._joint_state(index)[0] for index in self._joint_indices], dtype=np.float32)
++
++    def _joint_velocities(self) -> np.ndarray:
++        return np.asarray([self._joint_state(index)[1] for index in self._joint_indices], dtype=np.float32)
++
++    def reset(self, seed=None, options=None):
++        super().reset(seed=seed)
++        if self.physics_client is None:
++            self.physics_client = p.connect(p.GUI if self.render_mode == "human" else p.DIRECT)
++
++        p.resetSimulation(physicsClientId=self.physics_client)
++        p.setAdditionalSearchPath(pybullet_data.getDataPath(), physicsClientId=self.physics_client)
++        p.setGravity(0, 0, -9.81, physicsClientId=self.physics_client)
++        p.setTimeStep(1.0 / 240.0, physicsClientId=self.physics_client)
++        p.setPhysicsEngineParameter(numSolverIterations=150, physicsClientId=self.physics_client)
++        p.loadURDF("plane.urdf", physicsClientId=self.physics_client)
++
++        urdf_path = self._write_urdf()
++        self.robot_id = p.loadURDF(str(urdf_path), [0, 0, 0.02], useFixedBase=True, physicsClientId=self.physics_client)
++        self._joint_indices = list(range(p.getNumJoints(self.robot_id, physicsClientId=self.physics_client)))
++        for joint_index in self._joint_indices:
++            p.setJointMotorControl2(
++                self.robot_id,
++                joint_index,
++                p.VELOCITY_CONTROL,
++                force=0,
++                physicsClientId=self.physics_client,
++            )
++
++        self._step_count = 0
++        obs = self._get_obs()
++        info = {"mass_profile": self.mass_profile, "urdf_path": str(urdf_path)}
++        return obs, info
++
++    def step(self, action):
++        action = np.asarray(action, dtype=np.float32).reshape(self.n_links)
++        action = np.clip(action, self.action_space.low, self.action_space.high)
++
++        for joint_index, torque in zip(self._joint_indices, action):
++            p.setJointMotorControl2(
++                self.robot_id,
++                joint_index,
++                controlMode=p.TORQUE_CONTROL,
++                force=float(torque),
++                physicsClientId=self.physics_client,
++            )
++
++        p.stepSimulation(physicsClientId=self.physics_client)
++        self._step_count += 1
++
++        obs = self._get_obs()
++        reward = self._reward(action)
++        terminated = self._step_count >= self.max_steps
++        truncated = False
++        info = {
++            "tip_position": obs[self.n_links * 2:self.n_links * 2 + 3],
++            "mass_profile": self.mass_profile,
++        }
++        return obs, reward, terminated, truncated, info
++
++    def render(self):
++        if self.render_mode == "rgb_array":
++            width, height, view_matrix, projection_matrix, renderer = self._camera_config()
++            image = p.getCameraImage(
++                width,
++                height,
++                viewMatrix=view_matrix,
++                projectionMatrix=projection_matrix,
++                renderer=renderer,
++                physicsClientId=self.physics_client,
++            )
++            rgba = np.reshape(image[2], (height, width, 4))
++            return rgba[:, :, :3]
++        return None
++
++    def _camera_config(self):
++        width, height = 960, 720
++        target = [0.0, 0.0, self.segment_length * self.n_links * 0.45]
++        distance = self.segment_length * self.n_links * 2.0 + 0.6
++        yaw, pitch, roll = 20, -35, 0
++        view_matrix = p.computeViewMatrixFromYawPitchRoll(
++            cameraTargetPosition=target,
++            distance=distance,
++            yaw=yaw,
++            pitch=pitch,
++            roll=roll,
++            upAxisIndex=2,
++            physicsClientId=self.physics_client,
++        )
++        projection_matrix = p.computeProjectionMatrixFOV(
++            fov=55,
++            aspect=float(width) / float(height),
++            nearVal=0.05,
++            farVal=30.0,
++        )
++        return width, height, view_matrix, projection_matrix, p.ER_BULLET_HARDWARE_OPENGL
++
++    def close(self):
++        if self.physics_client is not None:
++            try:
++                p.disconnect(self.physics_client)
++            except Exception:
++                pass
++            self.physics_client = None
++
++        if self._temp_urdf_path is not None:
++            try:
++                temp_dir = self._temp_urdf_path.parent
++                self._temp_urdf_path.unlink(missing_ok=True)
++                temp_dir.rmdir()
++            except Exception:
++                pass
++            self._temp_urdf_path = None
++
++
++def run_demo(mass_profile: MassProfile, n_links: int, steps: int, render_mode: str):
++    env = MultiLinkMassRobotEnv(
++        n_links=n_links,
++        mass_profile=mass_profile,
++        render_mode=render_mode,
++    )
++    obs, info = env.reset()
++    log.info("Mass profile: %s", _mass_summary(mass_profile))
++    log.info("Observation dim: %d | Action dim: %d", env.observation_space.shape[0], env.action_space.shape[0])
++
++    for step in range(steps):
++        phase = 0.06 * step
++        joint_ids = np.arange(n_links, dtype=np.float32)
++        joint_positions = obs[:n_links]
++        joint_velocities = obs[n_links:2 * n_links]
++        tip_pos = obs[2 * n_links:2 * n_links + 3]
++        tip_vel = obs[2 * n_links + 3:2 * n_links + 6]
++
++        balance = -0.45 * joint_positions - 0.18 * joint_velocities
++        height_correction = 0.08 * (n_links * env.segment_length - float(tip_pos[2])) + 0.03 * float(tip_vel[2])
++        shaping = 0.12 * np.sin(phase + joint_ids * 0.4)
++        action = balance + height_correction + shaping
++        obs, reward, terminated, truncated, info = env.step(action)
++        if step % 50 == 0:
++            tip = info["tip_position"]
++            log.info("step=%d reward=%.3f tip=(%.3f, %.3f, %.3f)", step, reward, float(tip[0]), float(tip[1]), float(tip[2]))
++        if terminated or truncated:
++            break
++
++    env.close()
++
++
++if __name__ == "__main__":
++    parser = argparse.ArgumentParser(description="Run the multi-link mass robot demo")
++    parser.add_argument("--links", type=int, default=4)
++    parser.add_argument("--masses", type=str, default="0.35,0.45,0.55,0.70")
++    parser.add_argument("--payload-mass", type=float, default=0.50)
++    parser.add_argument("--steps", type=int, default=300)
++    parser.add_argument("--render-mode", choices=["human", "rgb_array", "none"], default="human")
++    args = parser.parse_args()
++
++    render_mode = None if args.render_mode == "none" else args.render_mode
++    mass_profile = MassProfile(link_masses=_parse_floats(args.masses), payload_mass=float(args.payload_mass))
++    run_demo(mass_profile=mass_profile, n_links=args.links, steps=args.steps, render_mode=render_mode)
+\ No newline at end of file
+diff --git a/retrain_boost_heavy.py b/retrain_boost_heavy.py
+new file mode 100644
+index 0000000..22a63b3
+--- /dev/null
++++ b/retrain_boost_heavy.py
+@@ -0,0 +1,80 @@
++"""Retrain a single heavy-payload model with a stronger hold teacher.
++Usage:
++  python retrain_boost_heavy.py --payload 0.40 --output <out.npz>
++"""
++from __future__ import annotations
++
++import argparse
++import logging
++from pathlib import Path
++
++import numpy as np
++
++import train_multilink_rc_cpg as trainer
++from multilink_mass_robot_env import MassProfile, MultiLinkMassRobotEnv
++from multilink_rc_cpg_backend import EchoStateNetwork, MassCondition
++
++logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
++log = logging.getLogger(__name__)
++
++
++def main():
++    parser = argparse.ArgumentParser(description="Retrain heavy payload with boosted teacher")
++    parser.add_argument("--payload", type=float, default=0.40)
++    parser.add_argument("--links", type=int, default=4)
++    parser.add_argument("--masses", type=str, default="0.20,0.25,0.30,0.35")
++    parser.add_argument("--episodes", type=int, default=20)
++    parser.add_argument("--steps", type=int, default=300)
++    parser.add_argument("--reservoir", type=int, default=600)
++    parser.add_argument("--output", type=Path, default=Path("multilink_rc_hold_model_payload0.40_boost.npz"))
++    parser.add_argument("--extra-lift", type=float, default=0.30, help="Extra constant torque per joint added to teacher for the target payload")
++    args = parser.parse_args()
++
++    payload_mass = float(args.payload)
++    base_link_masses = tuple(float(x) for x in args.masses.split(","))
++    profile = MassProfile(link_masses=base_link_masses, payload_mass=payload_mass)
++
++    # Wrap trainer.hold_teacher to add extra lift for the target payload
++    orig_hold = trainer.hold_teacher
++
++    def boosted_hold(obs: np.ndarray, n_links: int, mass_condition: MassCondition, segment_length: float = 0.18) -> np.ndarray:
++        out = orig_hold(obs, n_links, mass_condition, segment_length)
++        if abs(float(mass_condition.payload_mass) - payload_mass) < 1e-6:
++            extra = np.full(n_links, float(args.extra_lift), dtype=np.float32)
++            return (out + extra).astype(np.float32)
++        return out
++
++    trainer.hold_teacher = boosted_hold
++
++    env = MultiLinkMassRobotEnv(n_links=args.links, mass_profile=profile, render_mode=None)
++    log.info("Collecting episodes with boosted teacher for payload=%.3f", payload_mass)
++    episodes_X, episodes_Y = trainer.collect_episodes(env, MassCondition(profile.link_masses, profile.payload_mass), n_episodes=args.episodes, episode_length=args.steps)
++    env.close()
++
++    feature_dim = episodes_X[0].shape[1]
++    action_dim = episodes_Y[0].shape[1]
++    esn = EchoStateNetwork(n_inputs=feature_dim, n_reservoir=args.reservoir, seed=42)
++    esn.fit(episodes_X, episodes_Y, ridge=1e-4, washout=trainer.WASHOUT)
++
++    model_path = args.output
++    with model_path.open("wb") as handle:
++        np.savez_compressed(
++            handle,
++            n_links=np.int32(args.links),
++            link_masses=np.asarray(base_link_masses, dtype=np.float32),
++            payload_mass=np.float32(profile.payload_mass),
++            reservoir_Win=esn.Win,
++            reservoir_W=esn.W,
++            reservoir_W_out=esn.W_out,
++            reservoir_leak=np.float32(esn.leak),
++            reservoir_n=np.int32(esn.n_reservoir),
++            feature_dim=np.int32(feature_dim),
++            action_dim=np.int32(action_dim),
++            profile_records=np.asarray([{"payload_mass": profile.payload_mass, "boosted": True}], dtype=object),
++        )
++
++    log.info("Saved boosted heavy-payload model to %s", model_path)
++
++
++if __name__ == "__main__":
++    main()
+diff --git a/run_multilink_rc_cpg_demo.py b/run_multilink_rc_cpg_demo.py
+new file mode 100644
+index 0000000..e9e65c1
+--- /dev/null
++++ b/run_multilink_rc_cpg_demo.py
+@@ -0,0 +1,133 @@
++"""Run the trained RC/CPG policy for the upright multi-link mass robot."""
++
++from __future__ import annotations
++
++import argparse
++import logging
++from pathlib import Path
++
++import matplotlib
++
++matplotlib.use("Agg")
++import matplotlib.animation as animation
++import matplotlib.pyplot as plt
++import numpy as np
++
++from multilink_mass_robot_env import MassProfile, MultiLinkMassRobotEnv
++from multilink_rc_cpg_backend import EchoStateNetwork, MassCondition
++
++
++logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
++log = logging.getLogger(__name__)
++
++
++def load_model(model_path: Path):
++    payload = np.load(model_path, allow_pickle=True)
++    return payload
++
++
++def build_features(obs: np.ndarray, prev_obs: np.ndarray, mass_condition: MassCondition) -> np.ndarray:
++    obs = np.asarray(obs, dtype=np.float32)
++    prev_obs = np.asarray(prev_obs, dtype=np.float32)
++    delta = obs - prev_obs
++    return np.concatenate([obs, delta, mass_condition.vector]).astype(np.float32)
++
++
++def rigid_hold_torque(obs: np.ndarray, n_links: int, max_torque: float) -> np.ndarray:
++    joint_positions = np.asarray(obs[:n_links], dtype=np.float32)
++    joint_velocities = np.asarray(obs[n_links:2 * n_links], dtype=np.float32)
++    pd_torque = -(12.0 * joint_positions + 2.2 * joint_velocities)
++    return np.clip(pd_torque, -max_torque, max_torque).astype(np.float32)
++
++
++def run_demo(model_path: Path, output_gif: Path, reward_plot: Path | None = None):
++    payload = load_model(model_path)
++    n_links = int(payload["n_links"])
++    link_masses = tuple(np.asarray(payload["link_masses"], dtype=np.float32).tolist())
++    payload_mass = float(payload["payload_mass"])
++    mass_condition = MassCondition(link_masses=link_masses, payload_mass=payload_mass)
++
++    esn = EchoStateNetwork(
++        n_inputs=int(payload["feature_dim"]),
++        n_reservoir=int(payload["reservoir_n"]),
++        leak_rate=float(payload["reservoir_leak"]),
++    )
++    esn.Win = np.asarray(payload["reservoir_Win"], dtype=np.float64)
++    esn.W = np.asarray(payload["reservoir_W"], dtype=np.float64)
++    esn.W_out = np.asarray(payload["reservoir_W_out"], dtype=np.float64)
++
++    env = MultiLinkMassRobotEnv(
++        n_links=n_links,
++        mass_profile=MassProfile(link_masses=link_masses, payload_mass=payload_mass),
++        render_mode="rgb_array",
++    )
++
++    obs, _ = env.reset(seed=0)
++    prev_obs = obs.copy()
++    frames = []
++    rewards = []
++    filtered_action = np.zeros(env.action_space.shape[0], dtype=np.float32)
++    delayed_posture = np.zeros(env.action_space.shape[0], dtype=np.float32)
++    try:
++        esn.reset()
++        for step in range(300):
++            features = build_features(obs, prev_obs, mass_condition)
++            action = np.asarray(esn.predict(features), dtype=np.float32)
++            action = np.tanh(action / 14.0) * (0.16 * env.max_torque)
++            filtered_action = 0.98 * filtered_action + 0.02 * action
++            posture_action = rigid_hold_torque(obs, n_links, env.max_torque)
++            delayed_posture = 0.90 * delayed_posture + 0.10 * posture_action
++            blend = 0.05 if step < 80 else 0.10
++            action = np.clip(0.96 * filtered_action + blend * delayed_posture, env.action_space.low, env.action_space.high)
++            action[np.abs(action) < 0.60] = 0.0
++            prev_obs = obs.copy()
++            obs, reward, terminated, truncated, _ = env.step(action)
++            frame = env.render()
++            if frame is not None:
++                frames.append(frame)
++            rewards.append(float(reward))
++            if terminated or truncated:
++                break
++    finally:
++        env.close()
++
++    if frames:
++        fig = plt.figure(figsize=(8, 6))
++        plt.axis("off")
++        image = plt.imshow(frames[0])
++
++        def update(frame_index):
++            image.set_data(frames[frame_index])
++            return (image,)
++
++        ani = animation.FuncAnimation(fig, update, frames=len(frames), interval=30, blit=True)
++        ani.save(output_gif, writer="pillow", fps=30)
++        plt.close(fig)
++
++    if reward_plot is not None:
++        plt.figure(figsize=(10, 4))
++        plt.plot(rewards, linewidth=1.5)
++        plt.title("RC/CPG Reward")
++        plt.xlabel("Step")
++        plt.ylabel("Reward")
++        plt.tight_layout()
++        plt.savefig(reward_plot, dpi=160)
++        plt.close()
++
++    log.info("Saved RC/CPG demo GIF to %s", output_gif)
++    if reward_plot is not None:
++        log.info("Saved reward plot to %s", reward_plot)
++
++
++def main():
++    parser = argparse.ArgumentParser(description="Run the multi-link RC/CPG demo")
++    parser.add_argument("model", type=Path)
++    parser.add_argument("--output-gif", type=Path, default=Path("multilink_rc_cpg_demo.gif"))
++    parser.add_argument("--reward-plot", type=Path, default=None)
++    args = parser.parse_args()
++
++    run_demo(args.model, args.output_gif, reward_plot=args.reward_plot)
++
++
++if __name__ == "__main__":
++    main()
+\ No newline at end of file
+diff --git a/train_multilink_rc_cpg.py b/train_multilink_rc_cpg.py
+new file mode 100644
+index 0000000..0af3839
+--- /dev/null
++++ b/train_multilink_rc_cpg.py
+@@ -0,0 +1,146 @@
++"""Ant-style RC hold training for the upright multi-link mass robot."""
++
++from __future__ import annotations
++
++import argparse
++import logging
++from pathlib import Path
++
++import numpy as np
++
++from multilink_mass_robot_env import MassProfile, MultiLinkMassRobotEnv
++from multilink_rc_cpg_backend import EchoStateNetwork, MassCondition
++
++
++logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
++log = logging.getLogger(__name__)
++
++WASHOUT = 40
++OUTPUT_DIR = Path("multilink_rc_hold_model")
++TRAIN_PAYLOADS = (0.20, 0.30, 0.40)
++
++
++def hold_teacher(
++    obs: np.ndarray,
++    n_links: int,
++    mass_condition: MassCondition,
++    segment_length: float = 0.18,
++) -> np.ndarray:
++    obs = np.asarray(obs, dtype=np.float32)
++    joint_positions = obs[:n_links]
++    joint_velocities = obs[n_links:2 * n_links]
++    tip_pos = obs[2 * n_links:2 * n_links + 3]
++    tip_vel = obs[2 * n_links + 3:2 * n_links + 6]
++
++    target_height = segment_length * float(n_links)
++    height_error = target_height - float(tip_pos[2])
++    total_mass = float(np.sum(mass_condition.vector))
++    payload_bias = 0.10 * float(mass_condition.payload_mass)
++    joint_stiffness = -(2.20 + 0.03 * total_mass) * joint_positions
++    joint_damping = -(0.90 + 0.02 * total_mass) * joint_velocities
++    lift = (0.50 + 0.02 * total_mass) * height_error - (0.12 + 0.01 * total_mass) * float(tip_vel[2])
++    gravity_comp = np.full(n_links, 0.04 * total_mass / max(n_links, 1), dtype=np.float32)
++    shape = np.linspace(0.18 + payload_bias, 0.08 + payload_bias * 0.5, n_links, dtype=np.float32)
++    return (joint_stiffness + joint_damping + lift + gravity_comp + shape).astype(np.float32)
++
++
++def build_features(obs: np.ndarray, prev_obs: np.ndarray, mass_condition: MassCondition) -> np.ndarray:
++    obs = np.asarray(obs, dtype=np.float32)
++    prev_obs = np.asarray(prev_obs, dtype=np.float32)
++    delta = obs - prev_obs
++    return np.concatenate([obs, delta, mass_condition.vector]).astype(np.float32)
++
++
++def collect_episodes(env: MultiLinkMassRobotEnv, mass_condition: MassCondition, n_episodes: int = 20, episode_length: int = 300):
++    episodes_X = []
++    episodes_Y = []
++    for episode_index in range(n_episodes):
++        obs, _ = env.reset(seed=episode_index)
++        prev_obs = obs.copy()
++        ep_X = []
++        ep_Y = []
++        for step in range(episode_length):
++            teacher_action = hold_teacher(obs, env.n_links, mass_condition, segment_length=env.segment_length)
++            teacher_action = np.clip(teacher_action, env.action_space.low, env.action_space.high)
++            ep_X.append(build_features(obs, prev_obs, mass_condition))
++            ep_Y.append(teacher_action.copy())
++            prev_obs = obs.copy()
++            obs, _, terminated, truncated, _ = env.step(teacher_action)
++            if terminated or truncated:
++                break
++        episodes_X.append(np.asarray(ep_X, dtype=np.float32))
++        episodes_Y.append(np.asarray(ep_Y, dtype=np.float32))
++    return episodes_X, episodes_Y
++
++
++def main():
++    parser = argparse.ArgumentParser(description="Train RC hold policy on the upright multi-link mass robot")
++    parser.add_argument("--links", type=int, default=4)
++    parser.add_argument("--masses", type=str, default="0.20,0.25,0.30,0.35")
++    parser.add_argument("--episodes", type=int, default=20)
++    parser.add_argument("--steps", type=int, default=300)
++    parser.add_argument("--reservoir", type=int, default=600)
++    parser.add_argument("--output", type=Path, default=OUTPUT_DIR.with_suffix(".npz"))
++    args = parser.parse_args()
++
++    base_link_masses = tuple(float(x) for x in args.masses.split(","))
++    if len(base_link_masses) != args.links:
++        raise ValueError(f"Expected {args.links} link masses in --masses")
++
++    payloads = TRAIN_PAYLOADS
++    all_episodes_X = []
++    all_episodes_Y = []
++    profile_records = []
++    best_profile = None
++    best_score = -float("inf")
++
++    for payload_mass in payloads:
++        profile = MassProfile(link_masses=base_link_masses, payload_mass=payload_mass)
++        env = MultiLinkMassRobotEnv(n_links=args.links, mass_profile=profile, render_mode=None)
++        log.info("Training mass profile %s", profile)
++        episodes_X, episodes_Y = collect_episodes(env, MassCondition(profile.link_masses, profile.payload_mass), n_episodes=args.episodes, episode_length=args.steps)
++        score = float(np.mean([np.mean(ep[:, 2 * args.links + 2]) if len(ep) else 0.0 for ep in episodes_X]))
++        all_episodes_X.extend(episodes_X)
++        all_episodes_Y.extend(episodes_Y)
++        profile_records.append({"payload_mass": payload_mass, "score": score})
++        if score > best_score:
++            best_score = score
++            best_profile = profile
++        env.close()
++
++    feature_dim = all_episodes_X[0].shape[1]
++    action_dim = all_episodes_Y[0].shape[1]
++    esn = EchoStateNetwork(n_inputs=feature_dim, n_reservoir=args.reservoir, seed=42)
++    esn.fit(all_episodes_X, all_episodes_Y, ridge=1e-4, washout=WASHOUT)
++
++    model_path = args.output
++    with model_path.open("wb") as handle:
++        np.savez_compressed(
++            handle,
++            n_links=np.int32(args.links),
++            link_masses=np.asarray(base_link_masses, dtype=np.float32),
++            payload_mass=np.float32(best_profile.payload_mass),
++            reservoir_Win=esn.Win,
++            reservoir_W=esn.W,
++            reservoir_W_out=esn.W_out,
++            reservoir_leak=np.float32(esn.leak),
++            reservoir_n=np.int32(esn.n_reservoir),
++            feature_dim=np.int32(feature_dim),
++            action_dim=np.int32(action_dim),
++            profile_records=np.asarray(profile_records, dtype=object),
++        )
++
++    summary_path = model_path.with_suffix(".txt")
++    with summary_path.open("w", encoding="utf-8") as handle:
++        handle.write("Multi-link RC/CPG training summary\n")
++        handle.write(f"Best payload mass: {best_profile.payload_mass:.3f}\n")
++        handle.write(f"Best score: {best_score:.6f}\n")
++        for record in profile_records:
++            handle.write(f"payload={record['payload_mass']:.3f} score={record['score']:.6f}\n")
++
++    log.info("Saved RC/CPG model to %s", model_path)
++    log.info("Best payload mass=%.3f score=%.3f", best_profile.payload_mass, best_score)
++
++
++if __name__ == "__main__":
++    main()
+\ No newline at end of file
+diff --git a/train_single_payload.py b/train_single_payload.py
+new file mode 100644
+index 0000000..c9d3e6e
+--- /dev/null
++++ b/train_single_payload.py
+@@ -0,0 +1,72 @@
++"""Train a single-payload RC hold model for the multi-link robot.
++
++Usage:
++    python train_single_payload.py --payload 0.20 --output model_payload0.20.npz
++"""
++from __future__ import annotations
++
++import argparse
++from pathlib import Path
++import logging
++
++import numpy as np
++
++import train_multilink_rc_cpg as trainer
++from multilink_mass_robot_env import MassProfile, MultiLinkMassRobotEnv
++from multilink_rc_cpg_backend import EchoStateNetwork, MassCondition
++
++logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
++log = logging.getLogger(__name__)
++
++
++def train_single(payload_mass: float, links: int = 4, masses: str = "0.20,0.25,0.30,0.35", episodes: int = 20, steps: int = 300, reservoir: int = 600, output: Path | str = "multilink_rc_hold_model_payload.npz"):
++    base_link_masses = tuple(float(x) for x in masses.split(","))
++    if len(base_link_masses) != links:
++        raise ValueError(f"Expected {links} link masses in --masses")
++
++    profile = MassProfile(link_masses=base_link_masses, payload_mass=float(payload_mass))
++    env = MultiLinkMassRobotEnv(n_links=links, mass_profile=profile, render_mode=None)
++    log.info("Collecting episodes for payload=%.3f", float(payload_mass))
++    episodes_X, episodes_Y = trainer.collect_episodes(env, MassCondition(profile.link_masses, profile.payload_mass), n_episodes=episodes, episode_length=steps)
++    env.close()
++
++    if not episodes_X:
++        raise RuntimeError("No episodes collected")
++
++    feature_dim = episodes_X[0].shape[1]
++    action_dim = episodes_Y[0].shape[1]
++    esn = EchoStateNetwork(n_inputs=feature_dim, n_reservoir=reservoir, seed=42)
++    esn.fit(episodes_X, episodes_Y, ridge=1e-4, washout=trainer.WASHOUT)
++
++    model_path = Path(output)
++    with model_path.open("wb") as handle:
++        np.savez_compressed(
++            handle,
++            n_links=np.int32(links),
++            link_masses=np.asarray(base_link_masses, dtype=np.float32),
++            payload_mass=np.float32(profile.payload_mass),
++            reservoir_Win=esn.Win,
++            reservoir_W=esn.W,
++            reservoir_W_out=esn.W_out,
++            reservoir_leak=np.float32(esn.leak),
++            reservoir_n=np.int32(esn.n_reservoir),
++            feature_dim=np.int32(feature_dim),
++            action_dim=np.int32(action_dim),
++            profile_records=np.asarray([{"payload_mass": profile.payload_mass}], dtype=object),
++        )
++
++    log.info("Saved single-payload model to %s", str(model_path))
++
++
++if __name__ == "__main__":
++    parser = argparse.ArgumentParser(description="Train a single-payload RC hold model")
++    parser.add_argument("--payload", type=float, required=True)
++    parser.add_argument("--links", type=int, default=4)
++    parser.add_argument("--masses", type=str, default="0.20,0.25,0.30,0.35")
++    parser.add_argument("--episodes", type=int, default=20)
++    parser.add_argument("--steps", type=int, default=300)
++    parser.add_argument("--reservoir", type=int, default=600)
++    parser.add_argument("--output", type=Path, default=Path("multilink_rc_hold_model_payload.npz"))
++    args = parser.parse_args()
++
++    train_single(args.payload, links=args.links, masses=args.masses, episodes=args.episodes, steps=args.steps, reservoir=args.reservoir, output=args.output)
+-- 
+2.53.0.windows.2
+

@@ -1,0 +1,44 @@
+[INFO] ======================================================================
+[INFO] MULTIFUNCTIONAL RC + AUTOENCODER TRAINING
+[INFO] ======================================================================
+[INFO] Loaded CPG params from datasets\cpg_idx0.npy
+[INFO] Friction 0.5 CPG: forward=0.367 reward=66.4
+[INFO] Friction 0.5: 3 good episodes from 60 attempts
+[INFO] Loaded CPG params from datasets\cpg_idx1.npy
+[INFO] Friction 1.0 CPG: forward=3.636 reward=185.7
+[INFO]   Friction 1.0 collected 5/20 good episodes
+[INFO]   Friction 1.0 collected 10/20 good episodes
+[INFO]   Friction 1.0 collected 15/20 good episodes
+[INFO]   Friction 1.0 collected 20/20 good episodes
+[INFO] Friction 1.0: 20 good episodes from 20 attempts
+[INFO] Loaded CPG params from datasets\cpg_idx2.npy
+[INFO] Friction 1.5 CPG: forward=1.976 reward=88.1
+[INFO]   Friction 1.5 collected 5/20 good episodes
+[INFO]   Friction 1.5 collected 10/20 good episodes
+[INFO]   Friction 1.5 collected 15/20 good episodes
+[INFO]   Friction 1.5 collected 20/20 good episodes
+[INFO] Friction 1.5: 20 good episodes from 20 attempts
+[INFO] Collected dataset: obs=(21500, 105) next_obs=(21500, 105) actions=(21500, 8)
+[INFO] Training autoencoder (input=105 latent=48)
+[INFO] AE epoch 1/120 mse=0.525124
+[INFO] AE epoch 10/120 mse=0.205020
+[INFO] AE epoch 20/120 mse=0.138691
+[INFO] AE epoch 30/120 mse=0.107093
+[INFO] AE epoch 40/120 mse=0.088017
+[INFO] AE epoch 50/120 mse=0.074839
+[INFO] AE epoch 60/120 mse=0.065056
+[INFO] AE epoch 70/120 mse=0.057446
+[INFO] AE epoch 80/120 mse=0.051368
+[INFO] AE epoch 90/120 mse=0.046420
+[INFO] AE epoch 100/120 mse=0.042320
+[INFO] AE epoch 110/120 mse=0.038873
+[INFO] AE epoch 120/120 mse=0.035932
+[INFO] RC inputs shape: (21500, 49)
+[INFO] RC targets shape (actions + next-latent): (21500, 56)
+[INFO] Training multifunctional RC...
+[INFO] RC training complete
+[INFO] Eval friction 0.5 -> forward=-0.014 reward=-14.5
+[INFO] Eval friction 1.0 -> forward=-0.014 reward=41.3
+[INFO] Eval friction 1.5 -> forward=0.820 reward=180.8
+[INFO] Saved model to: multifunctional_rc_ae_model\multifunctional_rc_autoencoder.pkl
+[INFO] Saved summary to: multifunctional_rc_ae_model\summary.txt
