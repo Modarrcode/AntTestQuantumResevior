@@ -195,36 +195,32 @@ def build_four_leg_gait(mu: float, n_actions: int = 8, gait_style: str = "walk")
         # Keep the 0.5 gait gentle, but give 1.0 and 1.5 more distinct
         # timings and amplitudes so they adapt differently.
         if mu < 0.75:
-            omega = 1.22
-            hip_amp = 0.40
-            knee_amp = 0.45
-            hip_offset = 0.04
-            knee_offset = -0.32
-            leg_phases = np.array([0.0, 0.48 * np.pi, 0.96 * np.pi, 1.44 * np.pi], dtype=np.float64)
-            phase_offset = 1.02
-            duty_factor = 0.78
+            omega = 1.05
+            hip_amp = 0.34
+            knee_amp = 0.54
+            hip_offset = 0.02
+            knee_offset = -0.40
+            leg_phases = np.array([0.0, 0.62 * np.pi, 1.18 * np.pi, 1.74 * np.pi], dtype=np.float64)
+            phase_offset = 1.12
+            duty_factor = 0.83
         elif mu < 1.25:
-            # High-duty-factor lateral walk: keep the body supported by a
-            # staggered four-leg sequence instead of a diagonal pair.
-            omega = 1.60 + 0.03 * (mu - 1.0)
-            hip_amp = 0.54 + 0.03 * (mu - 1.0)
-            knee_amp = 0.72 + 0.03 * (mu - 1.0)
-            hip_offset = 0.11
-            knee_offset = -0.38
-            leg_phases = np.array([0.0, 0.18 * np.pi, 0.42 * np.pi, 0.66 * np.pi], dtype=np.float64)
-            phase_offset = 0.52
-            duty_factor = 0.74
+            omega = 1.58
+            hip_amp = 0.56
+            knee_amp = 0.70
+            hip_offset = 0.10
+            knee_offset = -0.36
+            leg_phases = np.array([0.0, 0.24 * np.pi, 0.52 * np.pi, 0.84 * np.pi], dtype=np.float64)
+            phase_offset = 0.58
+            duty_factor = 0.75
         else:
-            # Higher friction can take a stronger, faster walk, but keep the
-            # footfall pattern sequential rather than diagonal.
-            omega = 2.10 + 0.05 * (mu - 1.5)
-            hip_amp = 0.68 + 0.03 * (mu - 1.5)
-            knee_amp = 0.70 + 0.03 * (mu - 1.5)
-            hip_offset = 0.14
-            knee_offset = -0.34
-            leg_phases = np.array([0.0, 0.14 * np.pi, 0.36 * np.pi, 0.58 * np.pi], dtype=np.float64)
-            phase_offset = 0.46
-            duty_factor = 0.68
+            omega = 2.18
+            hip_amp = 0.72
+            knee_amp = 0.78
+            hip_offset = 0.15
+            knee_offset = -0.30
+            leg_phases = np.array([0.0, 0.12 * np.pi, 0.30 * np.pi, 0.52 * np.pi], dtype=np.float64)
+            phase_offset = 0.40
+            duty_factor = 0.67
         direction = -1.0
 
     amplitudes = np.array([
@@ -627,29 +623,57 @@ def _eval_cpg_vec(env, vec):
         if term or trunc:
             break
     return get_base_x(env) - start_x
-def _score_cpg_vec(env, vec):
+def _score_cpg_vec(env, vec, target_forward=None, target_omega=None, target_duty=None):
     """Evaluate a CPG vector with a stability-aware score.
 
-    Forward progress is the main signal, measured over a longer horizon to
-    better match the 5 m target, with a modest stability penalty.
+    Forward progress is the main signal, but each friction can bias toward a
+    different teacher profile so the three fitted CPGs do not collapse to the
+    same solution.
     """
     cpg = CPGController.from_vector(vec, 8)
     forward, reward, _, _, slip_count = evaluate_controller(env, cpg, episode_length=1000)
     forward_bonus = 35.0 * forward
     slip_penalty = 0.35 * slip_count
     still_penalty = 300.0 if forward < 2.0 else 0.0
-    return float(forward_bonus + reward - slip_penalty - still_penalty), float(forward), float(reward), int(slip_count)
+
+    profile_bonus = 0.0
+    if target_forward is not None:
+        profile_bonus -= 10.0 * abs(forward - float(target_forward))
+    if target_omega is not None:
+        profile_bonus -= 2.0 * abs(float(cpg.omega) - float(target_omega))
+    if target_duty is not None:
+        profile_bonus -= 4.0 * abs(float(getattr(cpg, "duty_factor", 0.65)) - float(target_duty))
+
+    return float(forward_bonus + reward - slip_penalty - still_penalty + profile_bonus), float(forward), float(reward), int(slip_count)
 
 
-def tune_cpg(env, cpg_iters=1000):
+def tune_cpg(env, mu, cpg_iters=1000):
     """Random search + hill-climbing refinement for best CPG."""
     best_score, best_vec = -float("inf"), None
     best_forward, best_reward, best_slip = -float("inf"), 0.0, 0
 
+    mu = float(mu)
+    if mu < 0.75:
+        priors = {"omega": 1.10, "amp": 0.45, "phase_scale": 0.60, "offset": -0.28, "duty": 0.82, "target_forward": 0.8}
+    elif mu < 1.25:
+        priors = {"omega": 1.55, "amp": 0.60, "phase_scale": 0.35, "offset": -0.34, "duty": 0.75, "target_forward": 3.5}
+    else:
+        priors = {"omega": 2.05, "amp": 0.72, "phase_scale": 0.20, "offset": -0.30, "duty": 0.68, "target_forward": 5.5}
+
     # Phase 1: random search
     for i in range(cpg_iters):
         vec = np.random.randn(25)
-        score, forward, reward, slip_count = _score_cpg_vec(env, vec)
+        vec[0] = priors["omega"] + 0.35 * vec[0]
+        vec[1:9] = priors["amp"] + 0.25 * vec[1:9]
+        vec[9:17] = priors["phase_scale"] * vec[9:17]
+        vec[17:25] = priors["offset"] + 0.15 * vec[17:25]
+        score, forward, reward, slip_count = _score_cpg_vec(
+            env,
+            vec,
+            target_forward=priors["target_forward"],
+            target_omega=priors["omega"],
+            target_duty=priors["duty"],
+        )
         if score > best_score:
             best_score, best_vec = score, vec.copy()
             best_forward, best_reward, best_slip = forward, reward, slip_count
@@ -663,7 +687,13 @@ def tune_cpg(env, cpg_iters=1000):
     sigma = 0.3
     for i in range(500):
         candidate = current_vec + np.random.randn(25) * sigma
-        score, forward, reward, slip_count = _score_cpg_vec(env, candidate)
+        score, forward, reward, slip_count = _score_cpg_vec(
+            env,
+            candidate,
+            target_forward=priors["target_forward"],
+            target_omega=priors["omega"],
+            target_duty=priors["duty"],
+        )
         if score > best_score:
             best_score = score
             best_forward = forward
@@ -1181,7 +1211,7 @@ def train_optimized_rc(
             log.info("  Four-leg gait teacher: forward=%.3f reward=%.3f", cpg_dist, cpg_rew)
         else:
             log.info("  Tuning CPG (%d iterations)...", cpg_iters)
-            cpg, cpg_dist = tune_cpg(env, cpg_iters=cpg_iters)
+            cpg, cpg_dist = tune_cpg(env, mu=mu, cpg_iters=cpg_iters)
             cpg_stats[mu] = {"forward": float(cpg_dist), "mode": gait_mode}
             log.info("  CPG tuned: forward=%.3f", cpg_dist)
         cpg_per_friction[mu] = cpg
